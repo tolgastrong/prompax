@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
-import { Copy, Plus, MoreVertical, Edit2, Trash2, Folder, LayoutGrid, Clock, AlertCircle, Check } from 'lucide-react'
+import { Copy, Plus, MoreVertical, Edit2, Trash2, Folder, LayoutGrid, Clock, AlertCircle, Check, Search, Sparkles, Loader2 } from 'lucide-react'
 
 // Shadcn UI Bileşenleri
 import { Input } from "@/components/ui/input"
@@ -21,6 +21,7 @@ type Prompt = {
   use_count: number
   created_at: string
   collection_id: string | null
+  similarity?: number // Anlamsal aramadan gelen eşleşme oranı
 }
 
 type Collection = {
@@ -81,8 +82,13 @@ export default function Dashboard() {
   const [showAddCollection, setShowAddCollection] = useState(false)
   const [editingPrompt, setEditingPrompt] = useState<Prompt | null>(null)
   const [activeCollection, setActiveCollection] = useState<string | null>(null)
-  const [copiedId, setCopiedId] = useState<string | null>(null) // Kopyalama animasyonu için
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   
+  // YENİ: Anlamsal Arama (Semantic Search) State'leri
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Prompt[] | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+
   const [form, setForm] = useState(emptyForm)
   const [collectionForm, setCollectionForm] = useState({ name: '', description: '' })
   const [submitting, setSubmitting] = useState(false)
@@ -98,6 +104,36 @@ export default function Dashboard() {
     }
     init()
   }, [])
+
+  // YENİ: Arama çubuğuna yazıldığında çalışacak "Debounce" efekti
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      if (searchQuery.trim().length > 2) {
+        setIsSearching(true)
+        try {
+          const res = await fetch('/api/prompts/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: searchQuery }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            setSearchResults(data)
+          } else {
+            console.error("Arama servisi hata döndürdü")
+          }
+        } catch (error) {
+          console.error("Arama hatası:", error)
+        } finally {
+          setIsSearching(false)
+        }
+      } else {
+        setSearchResults(null)
+      }
+    }, 500) // Kullanıcı yazmayı bıraktıktan 500ms sonra arar (API tasarrufu sağlar)
+
+    return () => clearTimeout(delayDebounceFn)
+  }, [searchQuery])
 
   const fetchAll = async () => {
     const [p, c] = await Promise.all([
@@ -175,6 +211,9 @@ export default function Dashboard() {
     if (!isConfirmed) return
     await fetch(`/api/prompts/${id}`, { method: 'DELETE' })
     setPrompts(prev => prev.filter(p => p.id !== id))
+    if (searchResults) {
+      setSearchResults(prev => prev ? prev.filter(p => p.id !== id) : null)
+    }
   }
 
   const handleAddCollection = async () => {
@@ -213,14 +252,15 @@ export default function Dashboard() {
     setError('')
   }
 
-  // Panoya Kopyalama Fonksiyonu
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text)
     setCopiedId(id)
     setTimeout(() => setCopiedId(null), 2000)
   }
 
+  // Ekranda gösterilecek promptları belirleme mantığı:
   const filteredPrompts = activeCollection ? prompts.filter(p => p.collection_id === activeCollection) : prompts
+  const displayPrompts = searchResults !== null ? searchResults : filteredPrompts
 
   if (loading) return (
     <div className="min-h-screen bg-[#060609] flex items-center justify-center">
@@ -231,7 +271,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[#060609] text-slate-200 font-sans selection:bg-violet-500/30">
       
-      {/* SIDEBAR - Premium Cam (Glass) Tasarımı */}
+      {/* SIDEBAR */}
       <aside className="fixed left-0 top-0 h-full w-64 bg-[#0A0A0F]/95 backdrop-blur-xl border-r border-white/5 flex flex-col z-20">
         <div className="p-6 border-b border-white/5">
           <div className="flex items-center gap-3">
@@ -244,9 +284,9 @@ export default function Dashboard() {
 
         <nav className="flex-1 p-4 overflow-y-auto space-y-1">
           <button
-            onClick={() => setActiveCollection(null)}
+            onClick={() => { setActiveCollection(null); setSearchQuery(''); setSearchResults(null); }}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[13px] font-medium transition-all duration-200 ${
-              !activeCollection ? 'bg-violet-500/10 text-violet-400 border border-violet-500/10' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
+              !activeCollection && searchResults === null ? 'bg-violet-500/10 text-violet-400 border border-violet-500/10' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
             }`}
           >
             <LayoutGrid className="w-4 h-4" />
@@ -264,7 +304,7 @@ export default function Dashboard() {
           {collections.map(col => (
             <button
               key={col.id}
-              onClick={() => setActiveCollection(col.id)}
+              onClick={() => { setActiveCollection(col.id); setSearchQuery(''); setSearchResults(null); }}
               className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-[13px] transition-all duration-200 ${
                 activeCollection === col.id ? 'bg-violet-500/10 text-violet-400 border border-violet-500/10' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
               }`}
@@ -299,9 +339,15 @@ export default function Dashboard() {
         <header className="sticky top-0 z-10 bg-[#060609]/80 backdrop-blur-xl border-b border-white/5 px-10 py-5 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-white tracking-tight flex items-center gap-2">
-              {activeCollection ? collections.find(c => c.id === activeCollection)?.name : 'All Prompts'}
+              {searchResults !== null 
+                ? 'Search Results' 
+                : (activeCollection ? collections.find(c => c.id === activeCollection)?.name : 'All Prompts')}
             </h1>
-            <p className="text-[13px] text-slate-400 mt-1">{filteredPrompts.length} prompts safely stored</p>
+            <p className="text-[13px] text-slate-400 mt-1">
+              {searchResults !== null 
+                ? `Found ${displayPrompts.length} matching prompts` 
+                : `${filteredPrompts.length} prompts safely stored`}
+            </p>
           </div>
           <button 
             onClick={() => { setShowAddPrompt(true); setEditingPrompt(null); setForm(emptyForm); setError('') }}
@@ -311,28 +357,49 @@ export default function Dashboard() {
           </button>
         </header>
 
+        {/* YENİ: Semantic Search Bar */}
+        <div className="px-10 pt-8 pb-2 relative z-10">
+          <div className="relative max-w-2xl group">
+            <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-lg bg-violet-500/10 text-violet-400 group-focus-within:bg-violet-500 group-focus-within:text-white transition-colors">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search prompts by meaning, keywords, or intent..."
+              className="w-full bg-[#0A0A0F]/80 backdrop-blur-md border border-white/5 rounded-2xl pl-14 pr-12 py-7 text-[14px] text-white placeholder-slate-500 focus-visible:ring-1 focus-visible:ring-violet-500/50 focus-visible:border-violet-500/30 transition-all shadow-lg hover:border-white/10"
+            />
+            {isSearching ? (
+              <Loader2 className="absolute right-5 top-1/2 -translate-y-1/2 w-5 h-5 text-violet-400 animate-spin" />
+            ) : (
+              <Search className="absolute right-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+            )}
+          </div>
+        </div>
+
         {/* PROMPT CARDS GRID */}
-        <div className="p-10 flex-1 relative">
-          {/* Arka plan parlama efekti */}
+        <div className="p-10 pt-6 flex-1 relative">
           <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full blur-[120px] pointer-events-none" />
 
-          {filteredPrompts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[500px] text-center relative z-10">
+          {displayPrompts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center relative z-10">
               <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-5 shadow-inner">
-                <Folder className="w-6 h-6 text-slate-400" />
+                {searchResults !== null ? <Search className="w-6 h-6 text-slate-400" /> : <Folder className="w-6 h-6 text-slate-400" />}
               </div>
-              <p className="text-white text-[16px] font-medium">No prompts found</p>
+              <p className="text-white text-[16px] font-medium">
+                {searchResults !== null ? 'No matching prompts found' : 'No prompts found'}
+              </p>
               <p className="text-slate-400 text-[14px] mt-2 max-w-sm leading-relaxed">
-                {activeCollection ? "You haven't saved any prompts to this collection yet." : "Start building your personal AI knowledge base by adding your first prompt."}
+                {searchResults !== null 
+                  ? "Try searching with different keywords or describe what the prompt does." 
+                  : (activeCollection ? "You haven't saved any prompts to this collection yet." : "Start building your personal AI knowledge base by adding your first prompt.")}
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 relative z-10">
-              {filteredPrompts.map(prompt => (
-                // KART TASARIMI (Sabit yükseklik, silikleşen metin, hover efekti)
+              {displayPrompts.map(prompt => (
                 <div key={prompt.id} className="group flex flex-col bg-[#0A0A0F]/80 backdrop-blur-sm border border-white/5 rounded-2xl p-6 hover:border-violet-500/40 transition-all duration-300 h-[280px] shadow-lg hover:shadow-[0_0_30px_-5px_rgba(139,92,246,0.15)] relative">
                   
-                  {/* Başlık ve Menü */}
                   <div className="flex items-start justify-between gap-4 mb-3">
                     <h3 className="text-[15px] font-semibold text-slate-100 leading-snug line-clamp-2 flex-1 group-hover:text-violet-100 transition-colors">
                       {prompt.title}
@@ -355,16 +422,13 @@ export default function Dashboard() {
                     </DropdownMenu>
                   </div>
 
-                  {/* İçerik Alanı (Fade-out efekti ile uzun yazıları keser) */}
                   <div className="relative flex-1 overflow-hidden mb-4">
                     <p className="text-[13px] text-slate-400 leading-relaxed whitespace-pre-wrap">
                       {prompt.content}
                     </p>
-                    {/* Sihirli Fade-out katmanı */}
                     <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#0A0A0F] to-transparent pointer-events-none group-hover:from-[#0d0d16] transition-colors duration-300" />
                   </div>
 
-                  {/* Alt Bilgi ve Butonlar */}
                   <div className="flex items-center gap-2 mt-auto pt-4 border-t border-white/5">
                     <span className={`text-[11px] font-medium px-2.5 py-1 rounded-md border ${getPlatformStyle(prompt.platform)}`}>
                       {getPlatformLabel(prompt.platform)}
@@ -372,8 +436,14 @@ export default function Dashboard() {
                     <span className="text-[11px] text-slate-400 bg-white/5 border border-white/5 px-2.5 py-1 rounded-md">
                       {prompt.category}
                     </span>
+
+                    {/* AI Eşleşme Oranı Rozeti (Sadece aramada çıkar) */}
+                    {prompt.similarity && (
+                      <span className="text-[10px] font-medium text-violet-400 bg-violet-500/10 px-2 py-1 rounded-md ml-1" title="AI Semantic Match Score">
+                        {Math.round(prompt.similarity * 100)}% Match
+                      </span>
+                    )}
                     
-                    {/* Tek Tıkla Kopyala Butonu */}
                     <button 
                       onClick={() => copyToClipboard(prompt.content, prompt.id)}
                       className="ml-auto flex items-center justify-center w-8 h-8 rounded-lg bg-white/5 hover:bg-violet-500/20 hover:text-violet-300 text-slate-400 transition-all border border-transparent hover:border-violet-500/30"
@@ -394,7 +464,6 @@ export default function Dashboard() {
         setShowAddPrompt(open);
         if(!open){ setEditingPrompt(null); setForm(emptyForm); setError(''); }
       }}>
-        {/* max-h-[85vh] eklendi ki ekranı patlatmasın */}
         <DialogContent className="bg-[#111118] border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl p-0 gap-0 overflow-hidden text-white [&>button]:hidden max-h-[85vh] flex flex-col">
           <div className="flex items-center justify-between p-6 border-b border-white/5 bg-[#0A0A0F]/50">
             <DialogTitle className="text-[16px] font-semibold text-white">
@@ -405,7 +474,6 @@ export default function Dashboard() {
             </button>
           </div>
 
-          {/* Orta Kısım - Scrollable (Kaydırılabilir) */}
           <div className="p-6 space-y-5 overflow-y-auto">
             {error && (
               <div className="flex items-center gap-2 text-[13px] text-red-400 bg-red-500/10 p-3.5 rounded-xl border border-red-500/20">

@@ -1,6 +1,12 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import OpenAI from 'openai'
+
+// OpenAI Kurulumu
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+})
 
 export async function GET() {
   const cookieStore = await cookies()
@@ -10,7 +16,7 @@ export async function GET() {
     {
       cookies: {
         getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
+        setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
         },
       },
@@ -23,6 +29,7 @@ export async function GET() {
   const { data, error } = await supabase
     .from('prompts')
     .select('*')
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -37,7 +44,7 @@ export async function POST(request: Request) {
     {
       cookies: {
         getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
+        setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
         },
       },
@@ -47,42 +54,45 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await request.json()
-  const { title, content, platform, category, collection_id } = body
-
-  if (!title || !content) {
-    return NextResponse.json({ error: 'Title and content required' }, { status: 400 })
-  }
-
-  // Free plan: max 50 prompt kontrolü
+  // Ücretsiz plan kontrolü (50 limit)
   const { count } = await supabase
     .from('prompts')
     .select('*', { count: 'exact', head: true })
+    .eq('user_id', user.id)
 
   if ((count ?? 0) >= 50) {
     return NextResponse.json({ error: 'FREE_LIMIT_REACHED' }, { status: 403 })
   }
 
-// DEĞİŞEN KISIM BURASI: collection_id eklendi
+  const body = await request.json()
+  const { title, content, platform, category, collection_id } = body
+
+  // YENİ: OpenAI ile Embedding (Anlamsal Vektör) Üretimi
+  let embedding = null
+  try {
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small', // Hızlı ve ucuz olan yeni nesil model
+      input: `${title} - ${content}`, // Başlık ve içeriği birleştirip haritalıyoruz
+    })
+    embedding = embeddingResponse.data[0].embedding
+  } catch (err) {
+    console.error('Embedding hatası:', err)
+  }
+
   const { data, error } = await supabase
     .from('prompts')
     .insert({ 
       title, 
       content, 
       platform: platform || 'other', 
-      category: category || 'general', 
+      category: category || 'general',
+      collection_id: collection_id || null,
       user_id: user.id,
-      collection_id: collection_id || null // Bu satır sayesinde prompt koleksiyona bağlanacak
+      embedding // Ürettiğimiz haritayı veritabanına yazıyoruz
     })
     .select()
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  // Koleksiyona ekle
-  if (collection_id && data) {
-    await supabase.from('collection_prompts').insert({ collection_id, prompt_id: data.id })
-  }
-
   return NextResponse.json(data)
 }

@@ -1,10 +1,14 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import OpenAI from 'openai'
 
-// DÜZENLEME (EDIT) İŞLEMİ
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+})
+
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params; // Next.js 15 zorunluluğu
+  const { id } = await params
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,7 +16,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     {
       cookies: {
         getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
+        setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
         },
       },
@@ -25,6 +29,18 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   const body = await request.json()
   const { title, content, platform, category, collection_id } = body
 
+  // YENİ: Yazı değiştiği için anlamsal haritayı yeniden üretiyoruz
+  let embedding = null
+  try {
+    const embeddingResponse = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: `${title} - ${content}`,
+    })
+    embedding = embeddingResponse.data[0].embedding
+  } catch (err) {
+    console.error('Embedding hatası:', err)
+  }
+
   const { data, error } = await supabase
     .from('prompts')
     .update({ 
@@ -32,7 +48,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       content, 
       platform: platform || 'other', 
       category: category || 'general',
-      collection_id: collection_id || null 
+      collection_id: collection_id || null,
+      embedding // Yeni haritayı kaydediyoruz
     })
     .eq('id', id)
     .eq('user_id', user.id)
@@ -43,9 +60,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   return NextResponse.json(data)
 }
 
-// SİLME (DELETE) İŞLEMİ
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id } = await params
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
