@@ -2,8 +2,9 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 
+// DÜZENLEME (EDIT) İŞLEMİ
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
+  const { id } = await params; // Next.js 15 zorunluluğu
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -22,11 +23,17 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json()
-  const { title, content, platform, category } = body
+  const { title, content, platform, category, collection_id } = body
 
   const { data, error } = await supabase
     .from('prompts')
-    .update({ title, content, platform, category })
+    .update({ 
+      title, 
+      content, 
+      platform: platform || 'other', 
+      category: category || 'general',
+      collection_id: collection_id || null 
+    })
     .eq('id', id)
     .eq('user_id', user.id)
     .select()
@@ -36,8 +43,9 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   return NextResponse.json(data)
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
+// SİLME (DELETE) İŞLEMİ
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -45,7 +53,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     {
       cookies: {
         getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
+        setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
         },
       },

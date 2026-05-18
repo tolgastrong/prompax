@@ -63,9 +63,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'FREE_LIMIT_REACHED' }, { status: 403 })
   }
 
+// DEĞİŞEN KISIM BURASI: collection_id eklendi
   const { data, error } = await supabase
     .from('prompts')
-    .insert({ title, content, platform: platform || 'other', category: category || 'general', user_id: user.id })
+    .insert({ 
+      title, 
+      content, 
+      platform: platform || 'other', 
+      category: category || 'general', 
+      user_id: user.id,
+      collection_id: collection_id || null // Bu satır sayesinde prompt koleksiyona bağlanacak
+    })
     .select()
     .single()
 
