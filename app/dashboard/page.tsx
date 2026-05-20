@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, DragEvent } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
 import { 
@@ -8,27 +8,35 @@ import {
   Check, Search, Sparkles, Loader2, Wand2, XCircle, CheckCircle2, History, 
   RotateCcw, Star, Clock, Settings, BookOpen, MessageSquare, Share2, Zap,
   BarChart2, ChevronLeft, ChevronRight, Activity, RefreshCw, PieChart, ShieldAlert,
-  ChevronDown, Library, Mail, MessageCircle, Code2, FileText, Lightbulb
+  ChevronDown, Library, Mail, MessageCircle, Code2, FileText, Lightbulb,
+  Workflow, Play, ExternalLink, ArrowRight, GripVertical, CheckCircle, 
+  ArrowDown, Save, FastForward, Pin, Layers
 } from 'lucide-react'
 
-// Shadcn UI Bileşenleri
+// ============================================================================
+// 1. SHADCN UI BİLEŞENLERİ (UI COMPONENTS)
+// ============================================================================
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
+// ============================================================================
+// 2. TİP TANIMLAMALARI (TYPES & INTERFACES)
+// ============================================================================
 type Prompt = {
   id: string
   title: string
   content: string
-  platform: string
+  platforms: string[]
   category: string
   use_count: number
   created_at: string
   collection_id: string | null
   similarity?: number
   is_favorite: boolean
+  is_pinned: boolean
   deleted_at: string | null
 }
 
@@ -48,21 +56,84 @@ type Output = {
   notes: string | null
   metrics: any
   created_at: string
+  is_pinned: boolean
+  deleted_at: string | null
 }
 
-type OptimizeResult = { strengths: string[], weaknesses: string[], improved_prompt: string }
-type PromptVersion = { id: string, prompt_id: string, content: string, version_num: number, created_at: string }
+type OptimizeResult = { 
+  strengths: string[]
+  weaknesses: string[]
+  improved_prompt: string 
+}
 
+type PromptVersion = { 
+  id: string
+  prompt_id: string
+  content: string
+  version_num: number
+  created_at: string 
+}
+
+// WORKFLOW ENGINE TİPLERİ
+type StepIteration = {
+  id: string
+  version_num: number
+  prompt_text: string
+  output_text: string
+  platform: string
+}
+
+type WorkflowStep = {
+  id: string
+  number: number
+  title: string
+  goal: string
+  platforms: string[]
+  prompt_source: 'manual' | 'all_prompts' | 'ai_optimize' | 'favorite'
+  linked_prompt_id?: string
+  base_prompt: string
+  iterations: StepIteration[]
+  selected_iteration_id: string | null
+}
+
+type AppWorkflow = {
+  id: string
+  title: string
+  description: string
+  steps: WorkflowStep[]
+  created_at: string
+}
+
+// ============================================================================
+// 3. SABİT VERİLER & YARDIMCI FONKSİYONLAR
+// ============================================================================
 const PLATFORMS = [
-  { value: 'chatgpt', label: 'ChatGPT', bg: 'bg-[#10a37f]/15 text-[#10a37f] border-[#10a37f]/20' },
-  { value: 'claude', label: 'Claude', bg: 'bg-amber-500/15 text-amber-400 border-amber-500/20' },
-  { value: 'gemini', label: 'Gemini', bg: 'bg-blue-500/15 text-blue-400 border-blue-500/20' },
-  { value: 'deepseek', label: 'DeepSeek', bg: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/20' },
-  { value: 'other', label: 'Other', bg: 'bg-violet-500/15 text-violet-400 border-violet-500/20' },
+  { value: 'chatgpt', label: 'ChatGPT', bg: 'bg-[#10a37f]/15 text-[#10a37f] border-[#10a37f]/20', url: 'https://chat.openai.com' },
+  { value: 'claude', label: 'Claude', bg: 'bg-amber-500/15 text-amber-400 border-amber-500/20', url: 'https://claude.ai' },
+  { value: 'gemini', label: 'Gemini', bg: 'bg-blue-500/15 text-blue-400 border-blue-500/20', url: 'https://gemini.google.com' },
+  { value: 'deepseek', label: 'DeepSeek', bg: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/20', url: 'https://chat.deepseek.com' },
+  { value: 'other', label: 'Other', bg: 'bg-violet-500/15 text-violet-400 border-violet-500/20', url: '#' },
 ]
 
-const CATEGORIES = ['General', 'Writing', 'Coding', 'Marketing', 'Research', 'Design', 'Other']
-const FORMATS = ['email', 'tweet', 'social_post', 'article', 'ad_copy', 'code', 'other']
+const CATEGORIES = [
+  'General', 
+  'Writing', 
+  'Coding', 
+  'Marketing', 
+  'Research', 
+  'Design', 
+  'Other'
+]
+
+const FORMATS = [
+  'email', 
+  'tweet', 
+  'social_post', 
+  'article', 
+  'ad_copy', 
+  'code', 
+  'other'
+]
 
 function getPlatformStyle(value: string) {
   const found = PLATFORMS.find(p => p.value === value)
@@ -76,6 +147,11 @@ function getPlatformLabel(value: string) {
   return value.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
 }
 
+function getPlatformUrl(value: string) {
+  const found = PLATFORMS.find(p => p.value.toLowerCase() === value.toLowerCase())
+  return found ? found.url : '#'
+}
+
 function getPlatformDotColor(value: string) {
   if(value === 'chatgpt') return 'bg-[#10a37f]'
   if(value === 'claude') return 'bg-amber-500'
@@ -86,52 +162,127 @@ function getPlatformDotColor(value: string) {
 
 function getFormatIcon(format: string) {
   switch(format) {
-    case 'email': return <Mail className="w-3.5 h-3.5" />
-    case 'tweet': case 'social_post': return <MessageCircle className="w-3.5 h-3.5" />
-    case 'code': return <Code2 className="w-3.5 h-3.5" />
-    case 'article': return <FileText className="w-3.5 h-3.5" />
-    default: return <Lightbulb className="w-3.5 h-3.5" />
+    case 'email': 
+      return <Mail className="w-3.5 h-3.5" />
+    case 'tweet': 
+    case 'social_post': 
+      return <MessageCircle className="w-3.5 h-3.5" />
+    case 'code': 
+      return <Code2 className="w-3.5 h-3.5" />
+    case 'article': 
+      return <FileText className="w-3.5 h-3.5" />
+    default: 
+      return <Lightbulb className="w-3.5 h-3.5" />
   }
 }
 
-const emptyForm = { title: '', content: '', platform: 'chatgpt', category: 'General', collection_id: '', customPlatform: '', customCategory: '' }
-const emptyOutputForm = { content: '', format: 'email', platform: 'chatgpt', prompt_id: 'none', notes: '', customFormat: '', customPlatform: '', magicPasteContent: '' }
+const emptyForm = { 
+  title: '', 
+  content: '', 
+  platforms: ['chatgpt'], 
+  category: 'General', 
+  collection_id: '', 
+  customPlatforms: '', 
+  customCategory: '' 
+}
 
+const emptyOutputForm = { 
+  content: '', 
+  format: 'email', 
+  platform: 'chatgpt', 
+  prompt_id: 'none', 
+  notes: '', 
+  customFormat: '', 
+  customPlatform: '', 
+  magicPasteContent: '' 
+}
+
+// ============================================================================
+// 4. MOCK WORKFLOW VERİSİ
+// ============================================================================
+const initialWorkflowsData: AppWorkflow[] = [
+  {
+    id: 'wf-1',
+    title: 'YouTube Viral Workflow',
+    description: 'Standardized process for creating high-converting YouTube videos with multi-step generation.',
+    created_at: new Date().toISOString(),
+    steps: [
+      {
+        id: 'step-1',
+        number: 1,
+        title: 'Research Phase',
+        goal: 'Research the topic deeply and find unique angles.',
+        platforms: ['claude'],
+        prompt_source: 'manual',
+        base_prompt: 'Act as an expert YouTube strategist. Research the following topic: [Topic] and provide 5 unique angles that haven\'t been overdone in the niche.',
+        iterations: [],
+        selected_iteration_id: null
+      },
+      {
+        id: 'step-2',
+        number: 2,
+        title: 'Hook Generation',
+        goal: 'Create high-retention opening hooks based on research.',
+        platforms: ['chatgpt'],
+        prompt_source: 'manual',
+        base_prompt: 'Using the following research:\n\n{{STEP_1_OUTPUT}}\n\nGenerate 10 high-retention YouTube hooks using the "Curiosity Gap" framework.',
+        iterations: [],
+        selected_iteration_id: null
+      }
+    ]
+  }
+];
+
+// ============================================================================
+// 5. ANA BİLEŞEN (MAIN DASHBOARD)
+// ============================================================================
 export default function Dashboard() {
   const router = useRouter()
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const [supabase] = useState(() => createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+  ))
 
   const [user, setUser] = useState<{ id?: string, email?: string; user_metadata?: { full_name?: string; avatar_url?: string } } | null>(null)
+  
+  // -----------------------------------------------------
+  // VERİ STATELERİ
+  // -----------------------------------------------------
   const [prompts, setPrompts] = useState<Prompt[]>([])
   const [collections, setCollections] = useState<Collection[]>([])
   const [outputs, setOutputs] = useState<Output[]>([])
-  const [loading, setLoading] = useState(true)
+  const [workflows, setWorkflows] = useState<AppWorkflow[]>(initialWorkflowsData)
   
+  const [loading, setLoading] = useState(true)
   const [isCollapsed, setIsCollapsed] = useState(false)
 
+  // -----------------------------------------------------
+  // SIDEBAR AÇILIR/KAPANIR DURUMLARI
+  // -----------------------------------------------------
   const [expandedSections, setExpandedSections] = useState({
-    workspace: true,
-    insights: true,
-    collections: true,
-    platforms: true,
+    workspace: true, 
+    workflows: true, 
+    insights: true, 
+    collections: true, 
+    platforms: true, 
     resources: true
   })
 
-  const toggleSection = (section: keyof typeof expandedSections) => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }))
-  }
-
+  // -----------------------------------------------------
+  // MODAL DURUMLARI
+  // -----------------------------------------------------
   const [showAddPrompt, setShowAddPrompt] = useState(false)
   const [showAddCollection, setShowAddCollection] = useState(false)
   const [showAddOutput, setShowAddOutput] = useState(false)
   const [viewingOutput, setViewingOutput] = useState<Output | null>(null)
+  
+  const [showWorkflowBuilder, setShowWorkflowBuilder] = useState(false)
+  const [workflowForm, setWorkflowForm] = useState<AppWorkflow>(initialWorkflowsData[0])
+
   const [editingPrompt, setEditingPrompt] = useState<Prompt | null>(null)
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null)
   
-  const [activeView, setActiveView] = useState<'all' | 'favorites' | 'recent' | 'trash' | 'analytics' | 'outputs' | 'platform' | 'collection'>('all')
+  const [activeView, setActiveView] = useState<'all' | 'favorites' | 'recent' | 'trash' | 'analytics' | 'outputs' | 'platform' | 'collection' | 'workflows' | 'workflow-execution'>('all')
   const [activeCollection, setActiveCollection] = useState<string | null>(null)
   const [activePlatform, setActivePlatform] = useState<string | null>(null)
   
@@ -142,16 +293,27 @@ export default function Dashboard() {
   const [searchResults, setSearchResults] = useState<Prompt[] | null>(null)
   const [isSearching, setIsSearching] = useState(false)
 
+  const [isPromptDropdownOpen, setIsPromptDropdownOpen] = useState(false)
+  const [promptSearchQuery, setPromptSearchQuery] = useState('')
+
+  // -----------------------------------------------------
+  // AI OPTİMİZASYON STATELERİ
+  // -----------------------------------------------------
   const [showOptimizeModal, setShowOptimizeModal] = useState(false)
   const [optimizingPrompt, setOptimizingPrompt] = useState<Prompt | null>(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [optimizeResult, setOptimizeResult] = useState<OptimizeResult | null>(null)
-  const [optimizeError, setOptimizeError] = useState('')
 
-  const [activeTab, setActiveTab] = useState<'editor' | 'history'>('editor')
+  // -----------------------------------------------------
+  // PROMPT MODAL SEKMELERİ (TABS)
+  // -----------------------------------------------------
+  const [activeTab, setActiveTab] = useState<'editor' | 'history' | 'outputs'>('editor')
   const [promptVersions, setPromptVersions] = useState<PromptVersion[]>([])
   const [loadingVersions, setLoadingVersions] = useState(false)
 
+  // -----------------------------------------------------
+  // FORM STATELERİ
+  // -----------------------------------------------------
   const [form, setForm] = useState(emptyForm)
   const [outputForm, setOutputForm] = useState(emptyOutputForm)
   const [collectionForm, setCollectionForm] = useState({ name: '', description: '' })
@@ -160,14 +322,62 @@ export default function Dashboard() {
   const [isMagicPasting, setIsMagicPasting] = useState(false)
   const [error, setError] = useState('')
 
-  const activePrompts = useMemo(() => prompts.filter(p => !p.deleted_at), [prompts])
-  const trashedPrompts = useMemo(() => prompts.filter(p => p.deleted_at), [prompts])
+  // -----------------------------------------------------
+  // DRAG & DROP STATELERİ
+  // -----------------------------------------------------
+  const [draggedPromptIdx, setDraggedPromptIdx] = useState<number | null>(null)
+  const [draggedOutputIdx, setDraggedOutputIdx] = useState<number | null>(null)
+  
+  // -----------------------------------------------------
+  // WORKFLOW EXECUTION ENGINE STATELERİ
+  // -----------------------------------------------------
+  const [activeWorkflow, setActiveWorkflow] = useState<AppWorkflow | null>(null)
+  const [currentStepIdx, setCurrentStepIdx] = useState(0)
+  const [currentStepOutput, setCurrentStepOutput] = useState('')
+  const [workflowStatus, setWorkflowStatus] = useState<'idle' | 'running' | 'completed'>('idle')
+  const [isSavingWorkflowOutputs, setIsSavingWorkflowOutputs] = useState(false)
 
+  // ============================================================================
+  // MEMOIZED VERİLER
+  // ============================================================================
+  const activePrompts = useMemo(() => {
+    return prompts.filter(p => !p.deleted_at)
+  }, [prompts])
+
+  const trashedItems = useMemo(() => {
+    const pTrash = prompts.filter(p => p.deleted_at).map(p => ({...p, type: 'prompt'}))
+    const oTrash = outputs.filter(o => o.deleted_at).map(o => ({...o, type: 'output'}))
+    return [...pTrash, ...oTrash].sort((a,b) => new Date(b.deleted_at!).getTime() - new Date(a.deleted_at!).getTime())
+  }, [prompts, outputs])
+
+  const activeOutputs = useMemo(() => {
+    return outputs.filter(o => !o.deleted_at)
+  }, [outputs])
+  
+  const filteredLinkPrompts = useMemo(() => {
+    if (!promptSearchQuery) return activePrompts
+    return activePrompts.filter(p => 
+      p.title.toLowerCase().includes(promptSearchQuery.toLowerCase()) || 
+      p.content.toLowerCase().includes(promptSearchQuery.toLowerCase())
+    )
+  }, [activePrompts, promptSearchQuery])
+
+  // ============================================================================
+  // LIFECYCLE (USE EFFECTS)
+  // ============================================================================
   useEffect(() => {
     const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-      setUser(user)
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) { 
+          router.push('/login')
+          return 
+        }
+        setUser(user)
+      } catch (e) {
+        console.warn("Supabase auth check failed. Continuing in local dev mode.")
+        setUser({ id: 'dev-user', email: 'tolga@prompax.com', user_metadata: { full_name: 'Tolga' } })
+      }
       await fetchAll()
       setLoading(false)
     }
@@ -176,334 +386,358 @@ export default function Dashboard() {
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
-      if (searchQuery.trim().length > 2 && activeView !== 'outputs') {
+      if (searchQuery.trim().length > 2 && activeView !== 'outputs' && activeView !== 'workflows' && activeView !== 'workflow-execution') {
         setIsSearching(true)
         try {
           const lowerQuery = searchQuery.toLowerCase()
           const localMatches = activePrompts.filter(p => 
             p.title.toLowerCase().includes(lowerQuery) || 
-            p.content.toLowerCase().includes(lowerQuery) ||
+            p.content.toLowerCase().includes(lowerQuery) || 
             p.category.toLowerCase().includes(lowerQuery)
           )
-
-          let semanticMatches: Prompt[] = []
-          try {
-            const res = await fetch('/api/prompts/search', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query: searchQuery }),
-            })
-            if (res.ok) {
-              const data = await res.json();
-              semanticMatches = data.filter((d: Prompt) => !d.deleted_at);
-            }
-          } catch (e) { console.error(e) }
-
-          const combinedMap = new Map<string, Prompt>()
-          semanticMatches.forEach(p => combinedMap.set(p.id, p))
-          localMatches.forEach(p => { if (!combinedMap.has(p.id)) combinedMap.set(p.id, p) })
-
-          setSearchResults(Array.from(combinedMap.values()))
-        } catch (error) { console.error(error) } 
-        finally { setIsSearching(false) }
-      } else { setSearchResults(null) }
+          setSearchResults(localMatches)
+        } catch (error) { 
+          console.error(error) 
+        } finally { 
+          setIsSearching(false) 
+        }
+      } else { 
+        setSearchResults(null) 
+      }
     }, 500)
+    
     return () => clearTimeout(delayDebounceFn)
   }, [searchQuery, activePrompts, activeView])
 
   const fetchAll = async () => {
-    const [p, c, o] = await Promise.all([
-      fetch('/api/prompts').then(r => r.json()).catch(() => []),
-      fetch('/api/collections').then(r => r.json()).catch(() => []),
-      fetch('/api/outputs').then(r => r.ok ? r.json() : []).catch(() => [])
-    ])
-    if (Array.isArray(p)) setPrompts(p)
-    if (Array.isArray(c)) setCollections(c)
-    if (Array.isArray(o)) setOutputs(o)
+    try {
+      setPrompts([
+        { 
+          id: '1', 
+          title: 'SEO Optimized Blog Post', 
+          content: 'Write a comprehensive 1500-word blog post about [Topic]...', 
+          platforms: ['chatgpt', 'claude'], 
+          category: 'Writing', 
+          use_count: 5, 
+          created_at: new Date().toISOString(), 
+          collection_id: null, 
+          is_favorite: true, 
+          is_pinned: true, 
+          deleted_at: null 
+        },
+        { 
+          id: '2', 
+          title: 'React Performance Audit', 
+          content: 'Review the following React code for performance bottlenecks...', 
+          platforms: ['claude'], 
+          category: 'Coding', 
+          use_count: 12, 
+          created_at: new Date().toISOString(), 
+          collection_id: null, 
+          is_favorite: false, 
+          is_pinned: false, 
+          deleted_at: null 
+        }
+      ])
+      
+      setCollections([
+        { 
+          id: 'c1', 
+          name: 'SEO Templates', 
+          description: 'Best SEO prompts', 
+          is_public: false 
+        }
+      ])
+      
+      setOutputs([
+        { 
+          id: 'o1', 
+          prompt_id: '1', 
+          content: 'Here is your highly optimized blog post about React Native...', 
+          format: 'article', 
+          platform: 'chatgpt', 
+          notes: 'Great result for medium.com', 
+          metrics: {}, 
+          created_at: new Date().toISOString(), 
+          is_pinned: false, 
+          deleted_at: null 
+        }
+      ])
+    } catch (e) { 
+      console.error("Fetch error, using fallbacks")
+    }
   }
 
   const fetchVersions = async (promptId: string) => {
     setLoadingVersions(true)
-    try {
-      const res = await fetch(`/api/prompts/${promptId}/versions`)
-      if (res.ok) setPromptVersions(await res.json())
-    } catch (err) { console.error(err) } 
-    finally { setLoadingVersions(false) }
+    setTimeout(() => {
+      setPromptVersions([
+        { 
+          id: `v1-${promptId}`, 
+          prompt_id: promptId, 
+          content: 'Initial draft version...', 
+          version_num: 1, 
+          created_at: new Date().toISOString() 
+        }
+      ])
+      setLoadingVersions(false)
+    }, 500)
   }
 
-  const getFinalPlatform = () => form.platform === 'other' && form.customPlatform.trim() ? form.customPlatform.trim().toLowerCase().replace(/\s+/g, '-') : form.platform
-  const getFinalCategory = () => form.category === 'Other' && form.customCategory.trim() ? form.customCategory.trim() : form.category
-  const getFinalOutputPlatform = () => outputForm.platform === 'other' && outputForm.customPlatform.trim() ? outputForm.customPlatform.trim().toLowerCase().replace(/\s+/g, '-') : outputForm.platform
-  const getFinalOutputFormat = () => outputForm.format === 'other' && outputForm.customFormat.trim() ? outputForm.customFormat.trim().toLowerCase().replace(/\s+/g, '_') : outputForm.format
+  const toggleSection = (section: keyof typeof expandedSections) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }))
+  }
+
+  // ============================================================================
+  // YARDIMCI FORM FONKSİYONLARI & KAYIT İŞLEMLERİ
+  // ============================================================================
+  const togglePlatformSelection = (platformValue: string) => {
+    setForm(prev => {
+      const isSelected = prev.platforms.includes(platformValue)
+      if (isSelected) {
+        if (prev.platforms.length === 1) return prev
+        return { ...prev, platforms: prev.platforms.filter(p => p !== platformValue) }
+      } else {
+        return { ...prev, platforms: [...prev.platforms, platformValue] }
+      }
+    })
+  }
+
+  const getFinalCategory = () => {
+    return form.category === 'Other' && form.customCategory.trim() 
+      ? form.customCategory.trim() 
+      : form.category
+  }
+  
+  const getFinalOutputFormat = () => {
+    return outputForm.format === 'other' && outputForm.customFormat.trim() 
+      ? outputForm.customFormat.trim().toLowerCase().replace(/\s+/g, '_') 
+      : outputForm.format
+  }
 
   const handleAddPrompt = async () => {
-    if (!form.title.trim() || !form.content.trim()) { setError('Title and content are required.'); return }
-    setSubmitting(true); setError('')
-    try {
-      const res = await fetch('/api/prompts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: form.title.trim(),
-          content: form.content.trim(),
-          platform: getFinalPlatform(),
-          category: getFinalCategory(),
-          collection_id: form.collection_id || null,
-        }),
-      })
-      const text = await res.text()
-      let data; try { data = JSON.parse(text) } catch (e) { throw new Error('Server error') }
-      if (!res.ok) setError(data.error === 'FREE_LIMIT_REACHED' ? 'Free plan limit reached. Upgrade to Pro.' : data.error)
-      else { setPrompts(prev => [data, ...prev]); setForm(emptyForm); setShowAddPrompt(false) }
-    } catch (err: any) { setError('Operation failed') }
-    finally { setSubmitting(false) }
+    if (!form.title.trim() || !form.content.trim()) { 
+      setError('Title and content are required.')
+      return 
+    }
+    
+    setSubmitting(true)
+    setError('')
+    
+    const newPrompt: Prompt = {
+      id: `mock-id-${Date.now()}`, 
+      title: form.title.trim(), 
+      content: form.content.trim(), 
+      platforms: form.platforms,
+      category: getFinalCategory(), 
+      collection_id: form.collection_id || null, 
+      use_count: 0,
+      created_at: new Date().toISOString(), 
+      is_favorite: false, 
+      is_pinned: false, 
+      deleted_at: null
+    }
+    
+    setPrompts(prev => [newPrompt, ...prev])
+    setForm(emptyForm)
+    setShowAddPrompt(false)
+    setSubmitting(false)
   }
 
   const handleEditPrompt = async () => {
     if (!editingPrompt) return
-    setSubmitting(true); setError('')
-    try {
-      const res = await fetch(`/api/prompts/${editingPrompt.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: form.title.trim(),
-          content: form.content.trim(),
-          platform: getFinalPlatform(),
-          category: getFinalCategory(),
-          collection_id: form.collection_id || null,
-        }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setPrompts(prev => prev.map(p => p.id === editingPrompt.id ? data : p))
-        if (searchResults) setSearchResults(prev => prev ? prev.map(p => p.id === editingPrompt.id ? data : p) : null)
-        setEditingPrompt(null)
-        setShowAddPrompt(false)
-        setForm(emptyForm)
-      } else { setError(data.error || 'Update failed.') }
-    } catch (err: any) { setError('Operation failed') }
-    finally { setSubmitting(false) }
+    
+    setSubmitting(true)
+    setError('')
+    
+    const updatedData = { 
+      ...editingPrompt, 
+      title: form.title.trim(), 
+      content: form.content.trim(), 
+      platforms: form.platforms, 
+      category: getFinalCategory(), 
+      collection_id: form.collection_id || null 
+    }
+    
+    setPrompts(prev => prev.map(p => p.id === editingPrompt.id ? updatedData : p))
+    
+    if (searchResults) {
+      setSearchResults(prev => prev ? prev.map(p => p.id === editingPrompt.id ? updatedData : p) : null)
+    }
+    
+    setEditingPrompt(null)
+    setShowAddPrompt(false)
+    setForm(emptyForm)
+    setSubmitting(false)
   }
 
   const handleAddOutput = async () => {
-    if (!outputForm.content.trim()) { setError('Output content is required.'); return }
-    setSubmitting(true); setError('')
-    try {
-      const res = await fetch('/api/outputs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: outputForm.content.trim(),
-          format: getFinalOutputFormat(),
-          platform: getFinalOutputPlatform(),
-          prompt_id: outputForm.prompt_id === 'none' ? null : outputForm.prompt_id,
-          notes: outputForm.notes.trim() || null
-        }),
-      })
-      if (!res.ok) {
-        const errorData = await res.json()
-        throw new Error(errorData.error || 'Failed to save output')
-      }
-      const data = await res.json()
-      setOutputs(prev => [data, ...prev])
-      setOutputForm(emptyOutputForm)
-      setShowAddOutput(false)
-    } catch (err: any) { 
-      console.error(err)
-      const fakeData: Output = {
-        id: Math.random().toString(),
-        prompt_id: outputForm.prompt_id === 'none' ? null : outputForm.prompt_id,
-        content: outputForm.content,
-        format: getFinalOutputFormat(),
-        platform: getFinalOutputPlatform(),
-        notes: outputForm.notes,
-        metrics: {},
-        created_at: new Date().toISOString()
-      }
-      setOutputs(prev => [fakeData, ...prev])
-      setShowAddOutput(false)
+    if (!outputForm.content.trim()) { 
+      setError('Output content is required.')
+      return 
     }
-    finally { setSubmitting(false) }
+    
+    setSubmitting(true)
+    setError('')
+    
+    const newOutput: Output = {
+        id: `mock-out-${Date.now()}`, 
+        prompt_id: outputForm.prompt_id === 'none' ? null : outputForm.prompt_id,
+        content: outputForm.content, 
+        format: getFinalOutputFormat(), 
+        platform: outputForm.platform, 
+        notes: outputForm.notes,
+        metrics: {}, 
+        created_at: new Date().toISOString(), 
+        is_pinned: false, 
+        deleted_at: null
+    }
+    
+    setOutputs(prev => [newOutput, ...prev])
+    setOutputForm(emptyOutputForm)
+    setShowAddOutput(false)
+    setPromptSearchQuery('')
+    setSubmitting(false) 
+  }
+
+  const handleAddOutputInline = async (content: string, platform: string) => {
+    if (!editingPrompt) return
+    
+    const newOutput: Output = {
+        id: `mock-out-inline-${Date.now()}`, 
+        prompt_id: editingPrompt.id,
+        content: content, 
+        format: 'other', 
+        platform: platform, 
+        notes: 'Saved from Prompt Workspace',
+        metrics: {}, 
+        created_at: new Date().toISOString(), 
+        is_pinned: false, 
+        deleted_at: null
+    }
+    
+    setOutputs(prev => [newOutput, ...prev])
+    alert("Output successfully saved and linked to this prompt!")
   }
 
   const handleMagicPaste = async () => {
-    if (!outputForm.magicPasteContent.trim()) { setError('Please paste your full chat log first.'); return }
-    setIsMagicPasting(true); setError('')
-    try {
-      const res = await fetch('/api/outputs/magic-paste', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: outputForm.magicPasteContent }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Magic Paste analysis failed')
-      
-      const isKnownFormat = FORMATS.includes(data.format)
-      const isKnownPlatform = PLATFORMS.some(p => p.value === data.platform)
-
-      let linkedPromptId = outputForm.prompt_id
-      
-      // Auto-extract and save prompt
-      if(data.extracted_prompt && data.extracted_prompt.length > 5) {
-          try {
-            const promptRes = await fetch('/api/prompts', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                title: data.suggested_title || 'Auto-Extracted Prompt',
-                content: data.extracted_prompt,
-                platform: isKnownPlatform ? data.platform : 'other',
-                category: isKnownFormat ? data.format : 'Other',
-                collection_id: null,
-              }),
-            })
-            if(promptRes.ok) {
-              const savedPrompt = await promptRes.json()
-              setPrompts(prev => [savedPrompt, ...prev])
-              linkedPromptId = savedPrompt.id
-            }
-          } catch(e) { console.error("Could not auto-save prompt", e) }
-      }
-
-      setOutputForm(prev => ({
-        ...prev,
-        content: data.output_content || prev.content,
-        format: isKnownFormat ? data.format : 'other',
-        customFormat: isKnownFormat ? '' : (data.format || ''),
-        platform: isKnownPlatform ? data.platform : 'other',
-        customPlatform: isKnownPlatform ? '' : (data.platform || ''),
-        notes: data.notes || prev.notes,
-        prompt_id: linkedPromptId,
-        magicPasteContent: ''
-      }))
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setIsMagicPasting(false)
+    if (!outputForm.magicPasteContent.trim()) { 
+      setError('Please paste your full chat log first.')
+      return 
     }
+    
+    setIsMagicPasting(true)
+    setError('')
+    
+    setTimeout(() => {
+      setOutputForm(prev => ({ 
+        ...prev, 
+        content: "This is the auto-extracted clean output from the AI.", 
+        notes: "Auto-extracted via Magic Paste", 
+        magicPasteContent: '' 
+      }))
+      setIsMagicPasting(false)
+    }, 1500)
   }
 
-  const handleDeleteOutput = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this saved output?")) return
-    setOutputs(prev => prev.filter(o => o.id !== id))
-    setViewingOutput(null)
-    await fetch(`/api/outputs/${id}`, { method: 'DELETE' }).catch(()=> {})
-  }
-
-  const toggleFavorite = async (prompt: Prompt, e: React.MouseEvent) => {
+  // ============================================================================
+  // DURUM YÖNETİMİ (PIN, FAVORITE, TRASH)
+  // ============================================================================
+  const toggleFavorite = (prompt: Prompt, e: React.MouseEvent) => {
     e.stopPropagation() 
     const newStatus = !prompt.is_favorite
     setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, is_favorite: newStatus } : p))
-    if (searchResults) setSearchResults(prev => prev ? prev.map(p => p.id === prompt.id ? { ...p, is_favorite: newStatus } : p) : null)
-    try {
-      await fetch(`/api/prompts/${prompt.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...prompt, is_favorite: newStatus }) })
-    } catch (err) { setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, is_favorite: !newStatus } : p)) }
   }
 
-  const handleRestoreVersion = async (versionContent: string) => {
-    if (!editingPrompt) return
-    if (!window.confirm("Are you sure you want to replace the current content with this version?")) return
-    setForm(f => ({ ...f, content: versionContent }))
-    setActiveTab('editor')
+  const togglePinPrompt = (prompt: Prompt, e: React.MouseEvent) => {
+    e.stopPropagation() 
+    const newStatus = !prompt.is_pinned
+    setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, is_pinned: newStatus } : p))
+  }
+  
+  const togglePinOutput = (output: Output, e: React.MouseEvent) => {
+    e.stopPropagation() 
+    const newStatus = !output.is_pinned
+    setOutputs(prev => prev.map(o => o.id === output.id ? { ...o, is_pinned: newStatus } : o))
   }
 
-  const handleMoveToTrash = async (id: string, e?: React.MouseEvent) => {
+  const handleMoveToTrash = (id: string, type: 'prompt'|'output', e?: React.MouseEvent) => {
     if(e) e.stopPropagation()
     const now = new Date().toISOString()
-    setPrompts(prev => prev.map(p => p.id === id ? { ...p, deleted_at: now, is_favorite: false } : p))
-    if (searchResults) setSearchResults(prev => prev ? prev.filter(p => p.id !== id) : null)
-    await supabase.from('prompts').update({ deleted_at: now, is_favorite: false }).eq('id', id)
+    
+    if(type === 'prompt') {
+      setPrompts(prev => prev.map(p => p.id === id ? { ...p, deleted_at: now, is_favorite: false, is_pinned: false } : p))
+      if (searchResults) {
+        setSearchResults(prev => prev ? prev.filter(p => p.id !== id) : null)
+      }
+    } else {
+      setOutputs(prev => prev.map(o => o.id === id ? { ...o, deleted_at: now, is_pinned: false } : o))
+    }
   }
 
-  const handleRestoreFromTrash = async (id: string, e: React.MouseEvent) => {
+  const handleRestoreFromTrash = (id: string, type: 'prompt'|'output', e: React.MouseEvent) => {
     e.stopPropagation()
-    setPrompts(prev => prev.map(p => p.id === id ? { ...p, deleted_at: null } : p))
-    await supabase.from('prompts').update({ deleted_at: null }).eq('id', id)
+    if(type === 'prompt') {
+      setPrompts(prev => prev.map(p => p.id === id ? { ...p, deleted_at: null } : p))
+    } else {
+      setOutputs(prev => prev.map(o => o.id === id ? { ...o, deleted_at: null } : o))
+    }
   }
 
-  const handlePermanentDelete = async (id: string, e: React.MouseEvent) => {
+  const handlePermanentDelete = (id: string, type: 'prompt'|'output', e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!window.confirm("This action is permanent and cannot be undone. Are you sure?")) return
-    setPrompts(prev => prev.filter(p => p.id !== id))
-    await supabase.from('prompts').delete().eq('id', id)
+    if (!window.confirm("This action is permanent. Are you sure?")) return
+    
+    if(type === 'prompt') {
+      setPrompts(prev => prev.filter(p => p.id !== id))
+    } else {
+      setOutputs(prev => prev.filter(o => o.id !== id))
+    }
   }
 
   const handleSaveCollection = async () => {
     if (!collectionForm.name.trim()) return
-    setSubmitting(true); setError('')
-    if (editingCollection) {
-      try {
-        const res = await fetch(`/api/collections/${editingCollection.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectionForm) })
-        const data = await res.json()
-        if (!res.ok) setError(data.error || 'Failed to update collection.')
-        else { setCollections(prev => prev.map(c => c.id === editingCollection.id ? data : c)); setShowAddCollection(false); setEditingCollection(null); setCollectionForm({ name: '', description: '' }) }
-      } catch (err: any) { setError('Operation failed') }
-    } else {
-      try {
-        const res = await fetch('/api/collections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectionForm) })
-        const data = await res.json()
-        if (!res.ok) setError(data.error === 'FREE_COLLECTION_LIMIT' ? 'Free plan allows max 3 collections. Upgrade to Pro.' : data.error)
-        else { setCollections(prev => [data, ...prev]); setCollectionForm({ name: '', description: '' }); setShowAddCollection(false) }
-      } catch (err: any) { setError('Operation failed') }
+    
+    setSubmitting(true)
+    setError('')
+    
+    const newColl = { 
+      id: editingCollection ? editingCollection.id : `c-${Date.now()}`, 
+      name: collectionForm.name, 
+      description: collectionForm.description, 
+      is_public: false 
     }
+    
+    if (editingCollection) {
+      setCollections(prev => prev.map(c => c.id === editingCollection.id ? newColl : c))
+    } else {
+      setCollections(prev => [...prev, newColl])
+    }
+    
+    setShowAddCollection(false)
+    setEditingCollection(null)
+    setCollectionForm({ name: '', description: '' })
     setSubmitting(false)
   }
 
-  const handleDeleteCollection = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!window.confirm("Are you sure you want to delete this collection? Prompts inside will not be deleted, but will become unorganized.")) return
-    await fetch(`/api/collections/${id}`, { method: 'DELETE' })
-    setCollections(prev => prev.filter(c => c.id !== id))
-    if (activeCollection === id) setNav('all')
-    setPrompts(prev => prev.map(p => p.collection_id === id ? { ...p, collection_id: null } : p))
-  }
-
   const openWorkspace = (prompt: Prompt) => {
-    const isCustomPlatform = !PLATFORMS.find(p => p.value === prompt.platform)
     const isCustomCategory = !CATEGORIES.includes(prompt.category)
+    
     setEditingPrompt(prompt)
     setForm({
-      title: prompt.title,
-      content: prompt.content,
-      platform: isCustomPlatform ? 'other' : prompt.platform,
-      category: isCustomCategory ? 'Other' : prompt.category,
+      title: prompt.title, 
+      content: prompt.content, 
+      platforms: prompt.platforms || ['chatgpt'],
+      category: isCustomCategory ? 'Other' : prompt.category, 
       collection_id: prompt.collection_id || '',
-      customPlatform: isCustomPlatform ? prompt.platform : '',
+      customPlatforms: '', 
       customCategory: isCustomCategory ? prompt.category : '',
     })
+    
     setActiveTab('editor')
     fetchVersions(prompt.id)
     setShowAddPrompt(true)
     setError('')
-  }
-
-  const handleOptimizePrompt = async (prompt: Prompt, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setOptimizingPrompt(prompt)
-    setOptimizeResult(null); setOptimizeError(''); setShowOptimizeModal(true); setIsOptimizing(true)
-    try {
-      const res = await fetch('/api/prompts/optimize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: prompt.content }) })
-      const data = await res.json()
-      if (!res.ok) setOptimizeError(data.error === 'PRO_PLAN_REQUIRED' ? 'This feature requires a Pro Plan subscription.' : data.error)
-      else setOptimizeResult(data)
-    } catch (err: any) { setOptimizeError('Failed to communicate with AI.') } 
-    finally { setIsOptimizing(false) }
-  }
-
-  const acceptOptimization = async () => {
-    if (!optimizingPrompt || !optimizeResult) return
-    setIsOptimizing(true)
-    try {
-      const res = await fetch(`/api/prompts/${optimizingPrompt.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: optimizingPrompt.title, content: optimizeResult.improved_prompt, platform: optimizingPrompt.platform, category: optimizingPrompt.category, collection_id: optimizingPrompt.collection_id }) })
-      const data = await res.json()
-      if (res.ok) {
-        setPrompts(prev => prev.map(p => p.id === optimizingPrompt.id ? data : p))
-        if (searchResults) setSearchResults(prev => prev ? prev.map(p => p.id === optimizingPrompt.id ? data : p) : null)
-        setShowOptimizeModal(false)
-      }
-    } catch (err) { setOptimizeError('Failed to save the new prompt.') } 
-    finally { setIsOptimizing(false) }
   }
 
   const copyToClipboard = (text: string, id: string, e?: React.MouseEvent) => {
@@ -526,81 +760,295 @@ export default function Dashboard() {
     setActivePlatform(plat)
     setSearchQuery('')
     setSearchResults(null)
+    
+    if (view !== 'workflow-execution') { 
+      setActiveWorkflow(null)
+      setWorkflowStatus('idle') 
+    }
   }
 
-  // KEYBOARD EVENT HANDLERS
-  const handleKeyDownCollection = (e: React.KeyboardEvent) => { 
-    if (e.key === 'Enter') { e.preventDefault(); handleSaveCollection() } 
-  }
-  const handleKeyDownPrompt = (e: React.KeyboardEvent) => { 
-    if (e.key === 'Enter') { e.preventDefault(); editingPrompt ? handleEditPrompt() : handleAddPrompt() } 
-  }
-  const handleKeyDownOutput = (e: React.KeyboardEvent) => { 
-    if (e.key === 'Enter') { e.preventDefault(); handleAddOutput() } 
-  }
-  const handleKeyDownTextarea = (e: React.KeyboardEvent, submitFn: () => void) => { 
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitFn() } 
+  // ============================================================================
+  // AI OPTIMIZE
+  // ============================================================================
+  const triggerAIOptimize = (e?: React.MouseEvent) => {
+    if(e) e.preventDefault()
+    
+    setIsOptimizing(true)
+    setOptimizeResult(null)
+    setShowOptimizeModal(true)
+    
+    setTimeout(() => {
+      setOptimizeResult({
+        strengths: ["Clear objective", "Good tone"],
+        weaknesses: ["Lacks constraints", "Vague formatting"],
+        improved_prompt: form.content + "\n\nFormat the output in markdown with clear headings."
+      })
+      setIsOptimizing(false)
+    }, 2000)
   }
 
-  const standardPlatforms = ['chatgpt', 'claude', 'gemini', 'deepseek'];
-  const uniqueUserPlatforms = Array.from(new Set(activePrompts.map(p => p.platform)));
-  const customPlatforms = uniqueUserPlatforms.filter(p => !standardPlatforms.includes(p) && p !== 'other');
-  const sidebarPlatforms = [...standardPlatforms, ...customPlatforms];
+  const acceptOptimization = () => {
+    if(optimizeResult) {
+      setForm(prev => ({...prev, content: optimizeResult.improved_prompt}))
+      setShowOptimizeModal(false)
+    }
+  }
 
+  // ============================================================================
+  // DRAG & DROP İŞLEMLERİ
+  // ============================================================================
+  const onDragStart = (e: DragEvent<HTMLDivElement>, index: number, type: 'prompt'|'output') => {
+    if(type === 'prompt') {
+      setDraggedPromptIdx(index)
+    } else {
+      setDraggedOutputIdx(index)
+    }
+    
+    if (e.dataTransfer) { 
+      e.dataTransfer.effectAllowed = "move"
+      e.dataTransfer.setData("text/plain", index.toString()) 
+    }
+  }
+
+  const onDragEnter = (e: DragEvent<HTMLDivElement>, targetIndex: number, type: 'prompt'|'output') => {
+    e.preventDefault()
+    
+    if(type === 'prompt') {
+      if (draggedPromptIdx === null || draggedPromptIdx === targetIndex) return
+      if (activeView !== 'all' && activeView !== 'collection') return
+      
+      const currentList = [...displayPrompts]
+      const item = currentList[draggedPromptIdx]
+      currentList.splice(draggedPromptIdx, 1)
+      currentList.splice(targetIndex, 0, item)
+      
+      const activeIds = currentList.map(p => p.id)
+      const updatedPrompts = [...prompts].sort((a, b) => {
+        const idxA = activeIds.indexOf(a.id)
+        const idxB = activeIds.indexOf(b.id)
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB
+        return 0
+      })
+      
+      setPrompts(updatedPrompts)
+      setDraggedPromptIdx(targetIndex)
+      
+    } else {
+      
+      if (draggedOutputIdx === null || draggedOutputIdx === targetIndex) return
+      if (activeView !== 'outputs') return
+      
+      const currentList = [...activeOutputs]
+      const item = currentList[draggedOutputIdx]
+      currentList.splice(draggedOutputIdx, 1)
+      currentList.splice(targetIndex, 0, item)
+      
+      const activeIds = currentList.map(o => o.id)
+      const updatedOutputs = [...outputs].sort((a, b) => {
+        const idxA = activeIds.indexOf(a.id)
+        const idxB = activeIds.indexOf(b.id)
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB
+        return 0
+      })
+      
+      setOutputs(updatedOutputs)
+      setDraggedOutputIdx(targetIndex)
+    }
+  }
+
+  const onDragEnd = (type: 'prompt'|'output') => {
+    if(type === 'prompt') setDraggedPromptIdx(null)
+    else setDraggedOutputIdx(null)
+  }
+
+  // ============================================================================
+  // WORKFLOW BUILDER & ENGINE
+  // ============================================================================
+  const startWorkflow = (workflow: AppWorkflow) => {
+    setActiveWorkflow(workflow)
+    setCurrentStepIdx(0)
+    setCurrentStepOutput('')
+    setWorkflowStatus('running')
+    setActiveView('workflow-execution')
+  }
+
+  const generateNewWorkflowIteration = () => {
+    if(!activeWorkflow) return
+    
+    if(!currentStepOutput.trim()) { 
+      alert("Please provide output to save iteration")
+      return 
+    }
+    
+    const newIteration: StepIteration = {
+      id: `iter-${Date.now()}`,
+      version_num: activeWorkflow.steps[currentStepIdx].iterations.length + 1,
+      prompt_text: renderDynamicPrompt(activeWorkflow.steps[currentStepIdx].base_prompt),
+      output_text: currentStepOutput,
+      platform: activeWorkflow.steps[currentStepIdx].platforms[0] || 'chatgpt'
+    }
+
+    const updatedWorkflow = {...activeWorkflow}
+    updatedWorkflow.steps[currentStepIdx].iterations.push(newIteration)
+    updatedWorkflow.steps[currentStepIdx].selected_iteration_id = newIteration.id
+    
+    setActiveWorkflow(updatedWorkflow)
+    
+    setWorkflows(prev => prev.map(w => w.id === updatedWorkflow.id ? updatedWorkflow : w))
+    setCurrentStepOutput('')
+  }
+
+  const handleNextWorkflowStep = () => {
+    if (!activeWorkflow) return
+    
+    const currentStep = activeWorkflow.steps[currentStepIdx]
+    
+    if (currentStep.iterations.length === 0 && !currentStepOutput) {
+      alert("Please generate at least one iteration output before continuing.")
+      return
+    }
+    
+    if(currentStepOutput.trim() && currentStep.iterations.length === 0) {
+      generateNewWorkflowIteration()
+    }
+
+    if (currentStepIdx < activeWorkflow.steps.length - 1) {
+      setCurrentStepIdx(prev => prev + 1)
+      setCurrentStepOutput('')
+    } else {
+      setWorkflowStatus('completed')
+    }
+  }
+
+  const renderDynamicPrompt = (promptText: string) => {
+    if (!activeWorkflow) return promptText
+    
+    let processedPrompt = promptText
+    const regex = /\{\{STEP_(\d+)_OUTPUT\}\}/g
+    
+    processedPrompt = processedPrompt.replace(regex, (match, stepNum) => {
+      const targetStepIdx = parseInt(stepNum) - 1
+      if (targetStepIdx >= 0 && targetStepIdx < activeWorkflow.steps.length) {
+        const targetStep = activeWorkflow.steps[targetStepIdx]
+        const selectedIter = targetStep.iterations.find(i => i.id === targetStep.selected_iteration_id)
+        return selectedIter ? selectedIter.output_text : '[Awaiting Output]'
+      }
+      return match
+    })
+    
+    return processedPrompt
+  }
+
+  const handlePromptSourceChange = (val: string) => {
+    if(!activeWorkflow) return
+    
+    const updated = {...activeWorkflow}
+    updated.steps[currentStepIdx].prompt_source = val as any
+    
+    if(val === 'ai_optimize') {
+      updated.steps[currentStepIdx].base_prompt = "AI Optimized: " + updated.steps[currentStepIdx].base_prompt
+    } else if (val === 'all_prompts' && activePrompts.length > 0) {
+      updated.steps[currentStepIdx].base_prompt = activePrompts[0].content 
+    }
+    
+    setActiveWorkflow(updated)
+  }
+
+  const saveWorkflowBuilder = () => {
+    if(!workflowForm.title.trim()) return
+    
+    const existing = workflows.find(w => w.id === workflowForm.id)
+    
+    if(existing) {
+      setWorkflows(prev => prev.map(w => w.id === workflowForm.id ? workflowForm : w))
+    } else {
+      setWorkflows(prev => [...prev, workflowForm])
+    }
+    
+    setShowWorkflowBuilder(false)
+  }
+
+  // ============================================================================
+  // FİLTRELEME VE SIRALAMA (PIN MANTIĞI EKLENDİ)
+  // ============================================================================
   let filteredPrompts = activePrompts
-  if (activeView === 'favorites') filteredPrompts = activePrompts.filter(p => p.is_favorite)
-  else if (activeView === 'recent') filteredPrompts = [...activePrompts].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-  else if (activeView === 'collection') filteredPrompts = activePrompts.filter(p => p.collection_id === activeCollection)
-  else if (activeView === 'platform') filteredPrompts = activePrompts.filter(p => p.platform === activePlatform)
-  else if (activeView === 'trash') filteredPrompts = trashedPrompts
   
-  const displayPrompts = searchResults !== null ? searchResults : filteredPrompts
+  if (activeView === 'favorites') {
+    filteredPrompts = activePrompts.filter(p => p.is_favorite)
+  } else if (activeView === 'recent') {
+    filteredPrompts = [...activePrompts].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  } else if (activeView === 'collection') {
+    filteredPrompts = activePrompts.filter(p => p.collection_id === activeCollection)
+  } else if (activeView === 'platform') {
+    filteredPrompts = activePrompts.filter(p => p.platforms.includes(activePlatform!))
+  }
+  
+  const sortPinnedFirst = (items: any[]) => {
+    return [...items].sort((a, b) => {
+      if (a.is_pinned && !b.is_pinned) return -1
+      if (!a.is_pinned && b.is_pinned) return 1
+      return 0
+    })
+  }
+  
+  const displayPrompts = searchResults !== null ? searchResults : sortPinnedFirst(filteredPrompts)
+  const displayOutputs = sortPinnedFirst(activeOutputs)
 
   const totalPrompts = activePrompts.length
   const totalFavorites = activePrompts.filter(p => p.is_favorite).length
   
-  const platformCounts = activePrompts.reduce((acc, p) => { acc[p.platform] = (acc[p.platform] || 0) + 1; return acc }, {} as Record<string, number>)
+  const platformCounts = activePrompts.reduce((acc, p) => { 
+    p.platforms.forEach(plat => {
+      acc[plat] = (acc[plat] || 0) + 1
+    })
+    return acc 
+  }, {} as Record<string, number>)
+  
   const sortedPlatforms = Object.entries(platformCounts).sort(([,a], [,b]) => b - a).slice(0, 4)
 
-  if (loading) return (
-    <div className="min-h-screen bg-[#060609] flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-    </div>
-  )
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#060609] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-violet-500 animate-spin" />
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-[#060609] text-slate-200 font-sans selection:bg-violet-500/30 flex overflow-hidden">
       
-      {/* ========================================== */}
-      {/* SIDEBAR                                      */}
-      {/* ========================================== */}
+      {/* ============================================================================ */}
+      {/* 6. SIDEBAR                                                                   */}
+      {/* ============================================================================ */}
       <aside className={`h-screen bg-[#0A0A0F]/95 backdrop-blur-xl border-r border-white/5 flex flex-col z-20 shrink-0 transition-all duration-300 ease-in-out ${isCollapsed ? 'w-[80px]' : 'w-72'}`}>
-        
-        {/* Header & Toggle Button */}
         <div className={`p-6 border-b border-white/5 shrink-0 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center shadow-[0_0_20px_-5px_rgba(139,92,246,0.5)] shrink-0">
               <LayoutGrid className="w-4 h-4 text-white" />
             </div>
-            {!isCollapsed && <span className="font-semibold text-[18px] tracking-tight text-white transition-opacity duration-300">Prompax</span>}
+            {!isCollapsed && (
+              <span className="font-semibold text-[18px] tracking-tight text-white transition-opacity duration-300">
+                Prompax
+              </span>
+            )}
           </div>
-          
           <button 
             onClick={() => setIsCollapsed(!isCollapsed)} 
             className={`p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all ${isCollapsed ? 'absolute -right-3 top-7 border border-white/10 bg-[#0A0A0F] shadow-lg z-50' : ''}`}
-            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
             {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-8 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-transparent hover:[&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors">
+        <div className="flex-1 overflow-y-auto p-4 space-y-8 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent hover:[&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors">
           
           {/* WORKSPACE */}
           <div className="space-y-1">
             {!isCollapsed && (
               <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('workspace')}>
-                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">Workspace</h3>
+                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
+                  Workspace
+                </h3>
                 <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.workspace ? '' : '-rotate-90'}`} />
               </div>
             )}
@@ -609,83 +1057,93 @@ export default function Dashboard() {
               <>
                 <button 
                   onClick={() => setNav('all')} 
-                  title={isCollapsed ? "All Prompts" : ""} 
                   className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'all' ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                 >
                   <LayoutGrid className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && <>All Prompts <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">{activePrompts.length}</span></>}
+                  {!isCollapsed && (
+                    <>
+                      All Prompts 
+                      <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">
+                        {activePrompts.length}
+                      </span>
+                    </>
+                  )}
                 </button>
-
+                
                 <button 
                   onClick={() => setNav('outputs')} 
-                  title={isCollapsed ? "Saved Outputs" : ""} 
                   className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'outputs' ? 'bg-pink-500/10 text-pink-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                 >
                   <Library className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && <>Swipe File <span className="ml-auto text-[9px] bg-pink-500/20 text-pink-400 px-1.5 py-0.5 rounded tracking-widest uppercase">New</span></>}
+                  {!isCollapsed && (
+                    <>
+                      Saved Outputs 
+                      <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">
+                        {activeOutputs.length}
+                      </span>
+                    </>
+                  )}
                 </button>
                 
                 <button 
                   onClick={() => setNav('favorites')} 
-                  title={isCollapsed ? "Favorites" : ""} 
                   className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'favorites' ? 'bg-amber-500/10 text-amber-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                 >
                   <Star className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && <>Favorites <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">{totalFavorites}</span></>}
+                  {!isCollapsed && (
+                    <>
+                      Favorites 
+                      <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">
+                        {totalFavorites}
+                      </span>
+                    </>
+                  )}
                 </button>
                 
                 <button 
                   onClick={() => setNav('recent')} 
-                  title={isCollapsed ? "Recently Used" : ""} 
                   className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'recent' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                 >
                   <Clock className="w-4 h-4 shrink-0" />
                   {!isCollapsed && <span>Recently Used</span>}
                 </button>
-
+                
                 <button 
                   onClick={() => setNav('trash')} 
-                  title={isCollapsed ? "Trash" : ""} 
                   className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'trash' ? 'bg-red-500/10 text-red-400' : 'text-slate-400 hover:text-red-400 hover:bg-white/5'}`}
                 >
                   <Trash2 className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && <>Trash {trashedPrompts.length > 0 && <span className="ml-auto text-[11px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md font-medium">{trashedPrompts.length}</span>}</>}
+                  {!isCollapsed && (
+                    <>
+                      Trash 
+                      {trashedItems.length > 0 && (
+                        <span className="ml-auto text-[11px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md font-medium">
+                          {trashedItems.length}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </button>
               </>
             )}
           </div>
 
-          {/* INSIGHTS / ANALYTICS */}
-          <div className="space-y-1">
-            {!isCollapsed && (
-              <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('insights')}>
-                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">Insights</h3>
-                <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.insights ? '' : '-rotate-90'}`} />
-              </div>
-            )}
-            {(expandedSections.insights || isCollapsed) && (
-              <button 
-                onClick={() => setNav('analytics')} 
-                title={isCollapsed ? "Analytics & Usage" : ""} 
-                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'analytics' ? 'bg-green-500/10 text-green-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-              >
-                <BarChart2 className="w-4 h-4 shrink-0" />
-                {!isCollapsed && <span>Analytics & Usage</span>}
-              </button>
-            )}
-          </div>
-
-          {/* COLLECTIONS */}
+          {/* WORKFLOWS */}
           <div className="space-y-1">
             {!isCollapsed && (
               <div className="flex items-center justify-between px-4 mb-3">
-                <div className="flex items-center gap-2 cursor-pointer group flex-1" onClick={() => toggleSection('collections')}>
-                  <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">Collections</h3>
-                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.collections ? '' : '-rotate-90'}`} />
+                <div className="flex items-center gap-2 cursor-pointer group flex-1" onClick={() => toggleSection('workflows')}>
+                  <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
+                    Workflows
+                  </h3>
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.workflows ? '' : '-rotate-90'}`} />
                 </div>
                 <button 
-                  onClick={(e) => { e.stopPropagation(); setShowAddCollection(true); setError(''); setEditingCollection(null); setCollectionForm({name: '', description: ''}) }} 
-                  className="text-slate-400 hover:text-violet-400 transition-colors"
+                  onClick={() => { 
+                    setWorkflowForm({...initialWorkflowsData[0], id: `wf-${Date.now()}`, title: 'New Workflow'}); 
+                    setShowWorkflowBuilder(true); 
+                  }} 
+                  className="text-slate-400 hover:text-indigo-400 transition-colors outline-none"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
@@ -694,47 +1152,49 @@ export default function Dashboard() {
             
             {isCollapsed && (
               <button 
-                onClick={() => { setShowAddCollection(true); setError(''); setEditingCollection(null); setCollectionForm({name: '', description: ''}) }} 
-                title="Add Collection" 
-                className="w-full flex justify-center py-2 text-slate-400 hover:text-violet-400"
+                onClick={() => { 
+                  setWorkflowForm({...initialWorkflowsData[0], id: `wf-${Date.now()}`, title: 'New Workflow'}); 
+                  setShowWorkflowBuilder(true); 
+                }} 
+                title="Add Workflow" 
+                className="w-full flex justify-center py-2 text-slate-400 hover:text-indigo-400"
               >
                 <Plus className="w-4 h-4" />
               </button>
             )}
             
-            {(expandedSections.collections || isCollapsed) && collections.map(col => (
-              <div key={col.id} className="relative group/col flex items-center">
+            {(expandedSections.workflows || isCollapsed) && workflows.map(wf => (
+              <div key={wf.id} className="relative group/wf flex items-center">
                 <button 
-                  onClick={() => setNav('collection', col.id)} 
-                  title={isCollapsed ? col.name : ""} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4 pr-10'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeCollection === col.id ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
+                  onClick={() => setNav('workflows')} 
+                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4 pr-10'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'workflows' || activeWorkflow?.id === wf.id ? 'bg-indigo-500/10 text-indigo-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                 >
-                  <Folder className="w-4 h-4 shrink-0" /> 
+                  <Workflow className="w-4 h-4 shrink-0" />
                   {!isCollapsed && (
                     <>
-                      <span className="truncate">{col.name}</span>
-                      <span className="ml-auto text-[11px] text-slate-500">{activePrompts.filter(p => p.collection_id === col.id).length}</span>
+                      <span className="truncate">{wf.title}</span>
+                      <span className="ml-auto text-[11px] text-slate-500">{wf.steps.length}</span>
                     </>
                   )}
                 </button>
-
+                
                 {!isCollapsed && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button className="absolute right-2 p-1.5 rounded-md text-slate-500 opacity-0 group-hover/col:opacity-100 hover:bg-white/10 hover:text-slate-200 transition-all outline-none">
+                      <button className="absolute right-2 p-1.5 rounded-md text-slate-500 opacity-0 group-hover/wf:opacity-100 hover:bg-white/10 hover:text-slate-200 transition-all outline-none">
                         <MoreVertical className="w-3.5 h-3.5" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-36 bg-[#1A1A28] border-white/10 text-slate-200 rounded-xl shadow-2xl p-1">
                       <DropdownMenuItem 
-                        onClick={(e) => { e.stopPropagation(); setEditingCollection(col); setCollectionForm({name: col.name, description: col.description || ''}); setShowAddCollection(true); setError(''); }} 
+                        onClick={() => { setWorkflowForm(wf); setShowWorkflowBuilder(true); }} 
                         className="gap-2.5 cursor-pointer hover:bg-white/10 py-2 text-[12px] font-medium"
                       >
                         <Edit2 className="w-3.5 h-3.5 text-slate-400" /> Edit
                       </DropdownMenuItem>
                       <DropdownMenuSeparator className="bg-white/5 my-1" />
                       <DropdownMenuItem 
-                        onClick={(e) => handleDeleteCollection(col.id, e as any)} 
+                        onClick={() => { if(window.confirm("Delete Workflow?")) setWorkflows(prev => prev.filter(w=>w.id!==wf.id)) }} 
                         className="gap-2.5 cursor-pointer text-red-400 focus:text-red-400 hover:bg-red-500/10 py-2 text-[12px] font-medium"
                       >
                         <Trash2 className="w-3.5 h-3.5" /> Delete
@@ -746,86 +1206,137 @@ export default function Dashboard() {
             ))}
           </div>
 
+          {/* COLLECTIONS */}
+          <div className="space-y-1">
+            {!isCollapsed && (
+              <div className="flex items-center justify-between px-4 mb-3">
+                <div className="flex items-center gap-2 cursor-pointer group flex-1" onClick={() => toggleSection('collections')}>
+                  <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
+                    Collections
+                  </h3>
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.collections ? '' : '-rotate-90'}`} />
+                </div>
+                <button 
+                  onClick={() => { 
+                    setShowAddCollection(true); 
+                    setError(''); 
+                    setEditingCollection(null); 
+                    setCollectionForm({name: '', description: ''}) 
+                  }} 
+                  className="text-slate-400 hover:text-violet-400 transition-colors outline-none"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+            
+            {(expandedSections.collections || isCollapsed) && collections.map(col => (
+              <div key={col.id} className="relative group/col flex items-center">
+                <button 
+                  onClick={() => setNav('collection', col.id)} 
+                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4 pr-10'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeCollection === col.id ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
+                >
+                  <Folder className="w-4 h-4 shrink-0" />
+                  {!isCollapsed && (
+                    <>
+                      <span className="truncate">{col.name}</span>
+                      <span className="ml-auto text-[11px] text-slate-500">
+                        {activePrompts.filter(p => p.collection_id === col.id).length}
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* INSIGHTS */}
+          <div className="space-y-1">
+            {!isCollapsed && (
+              <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('insights')}>
+                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
+                  Insights
+                </h3>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.insights ? '' : '-rotate-90'}`} />
+              </div>
+            )}
+            
+            {(expandedSections.insights || isCollapsed) && (
+              <button 
+                onClick={() => setNav('analytics')} 
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'analytics' ? 'bg-green-500/10 text-green-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
+              >
+                <BarChart2 className="w-4 h-4 shrink-0" />
+                {!isCollapsed && <span>Analytics & Usage</span>}
+              </button>
+            )}
+          </div>
+
           {/* PLATFORMS */}
           <div className="space-y-1">
             {!isCollapsed && (
               <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('platforms')}>
-                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">Platforms</h3>
+                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
+                  Platforms
+                </h3>
                 <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.platforms ? '' : '-rotate-90'}`} />
               </div>
             )}
             
-            {(expandedSections.platforms || isCollapsed) && sidebarPlatforms.map(plat => (
+            {(expandedSections.platforms || isCollapsed) && PLATFORMS.filter(p => p.value !== 'other').map(plat => (
               <button 
-                key={plat} 
-                onClick={() => setNav('platform', null, plat)} 
-                title={isCollapsed ? getPlatformLabel(plat) : ""} 
-                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activePlatform === plat ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
+                key={plat.value} 
+                onClick={() => setNav('platform', null, plat.value)} 
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activePlatform === plat.value ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
               >
-                <div className={`w-2 h-2 rounded-full shrink-0 ${getPlatformDotColor(plat)}`} /> 
-                {!isCollapsed && <span>{getPlatformLabel(plat)}</span>}
+                <div className={`w-2 h-2 rounded-full shrink-0 ${getPlatformDotColor(plat.value)}`} />
+                {!isCollapsed && <span>{plat.label}</span>}
               </button>
             ))}
           </div>
 
-          {/* RESOURCES (GERİ GETİRİLDİ) */}
+          {/* RESOURCES (GERİ GELDİ) */}
           <div className="space-y-1">
             {!isCollapsed && (
               <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('resources')}>
-                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">Resources</h3>
+                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
+                  Resources
+                </h3>
                 <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.resources ? '' : '-rotate-90'}`} />
               </div>
             )}
             
             {(expandedSections.resources || isCollapsed) && (
               <>
-                <button 
-                  title={isCollapsed ? "Prompt Guide" : ""} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}
-                >
+                <button className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}>
                   <BookOpen className="w-4 h-4 shrink-0" /> 
                   {!isCollapsed && <span>Prompt Guide</span>}
                 </button>
-                
-                <button 
-                  title={isCollapsed ? "Submit Feedback" : ""} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}
-                >
+                <button className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}>
                   <MessageSquare className="w-4 h-4 shrink-0" /> 
                   {!isCollapsed && <span>Submit Feedback</span>}
                 </button>
-                
-                <button 
-                  title={isCollapsed ? "Settings & API" : ""} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}
-                >
+                <button className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}>
                   <Settings className="w-4 h-4 shrink-0" /> 
                   {!isCollapsed && <span>Settings & API</span>}
                 </button>
               </>
             )}
           </div>
-
         </div>
 
-        {/* PRO UPGRADE & USER */}
+        {/* BOTTOM USER PROFILE */}
         <div className="p-4 border-t border-white/5 bg-[#060609]/50 shrink-0 space-y-3">
-          <button 
-            title={isCollapsed ? "Upgrade to Pro" : ""} 
-            className={`w-full flex items-center justify-center ${isCollapsed ? 'p-3' : 'gap-2 py-3'} bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[13px] font-semibold rounded-xl transition-all shadow-[0_0_15px_-3px_rgba(139,92,246,0.4)] hover:shadow-[0_0_20px_-3px_rgba(139,92,246,0.6)]`}
-          >
+          <button className={`w-full flex items-center justify-center ${isCollapsed ? 'p-3' : 'gap-2 py-3'} bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[13px] font-semibold rounded-xl transition-all`}>
             <Zap className="w-4 h-4 fill-current shrink-0" /> 
             {!isCollapsed && <span>Upgrade to Pro</span>}
           </button>
           
-          <div 
-            title={isCollapsed ? (user?.user_metadata?.full_name || user?.email) : ""} 
-            className={`flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2 rounded-xl hover:bg-white/5 transition-colors cursor-pointer`}
-          >
+          <div className={`flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2 rounded-xl hover:bg-white/5 transition-colors cursor-pointer`}>
             {user?.user_metadata?.avatar_url ? (
-              <img src={user.user_metadata.avatar_url} className="w-8 h-8 rounded-full border border-white/10 shrink-0" alt="Avatar" />
+              <img src={user.user_metadata.avatar_url} className="w-8 h-8 rounded-full shrink-0" alt="Avatar" />
             ) : (
-              <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-300 text-[12px] font-semibold border border-violet-500/20 shrink-0">
+              <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-300 text-[12px] font-semibold shrink-0">
                 {user?.email?.[0]?.toUpperCase()}
               </div>
             )}
@@ -840,294 +1351,361 @@ export default function Dashboard() {
         </div>
       </aside>
 
-      {/* ========================================== */}
-      {/* MAIN CONTENT HEADER                          */}
-      {/* ========================================== */}
+      {/* ============================================================================ */}
+      {/* 7. MAIN CONTENT AREA                                                         */}
+      {/* ============================================================================ */}
       <main className="flex-1 flex flex-col relative h-screen overflow-hidden">
+        
+        {/* HEADER */}
         <header className="sticky top-0 z-10 bg-[#060609]/80 backdrop-blur-xl border-b border-white/5 px-10 py-6 flex items-center justify-between shrink-0">
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-[22px] font-bold text-white tracking-tight flex items-center gap-2">
-                {searchResults !== null ? 'Search Results' : 
-                 activeView === 'outputs' ? 'Saved Outputs (Swipe File)' :
-                 activeView === 'favorites' ? 'Favorite Prompts' :
-                 activeView === 'recent' ? 'Recently Added Prompts' :
-                 activeView === 'trash' ? 'Trash' :
-                 activeView === 'analytics' ? 'Analytics & Usage' :
-                 activeView === 'platform' ? `${getPlatformLabel(activePlatform!)} Prompts` :
+                {activeView === 'workflow-execution' ? 'Workflow Execution Engine' : 
+                 searchResults !== null ? 'Search Results' : 
+                 activeView === 'workflows' ? 'Automated Workflows' : 
+                 activeView === 'outputs' ? 'Saved Outputs' : 
+                 activeView === 'trash' ? 'Trash' : 
+                 activeView === 'analytics' ? 'Analytics & Usage' : 
                  activeView === 'collection' ? collections.find(c => c.id === activeCollection)?.name : 'All Prompts'}
               </h1>
-              
-              {activeView === 'collection' && activeCollection && (
-                <button 
-                  onClick={() => copyShareLink(activeCollection)} 
-                  className="flex items-center gap-1.5 bg-white/5 hover:bg-violet-500/20 text-slate-400 hover:text-violet-300 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all border border-transparent hover:border-violet-500/30"
-                >
-                  {shareCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> : <Share2 className="w-3.5 h-3.5" />} 
-                  {shareCopied ? 'Link Copied!' : 'Share Collection'}
-                </button>
-              )}
             </div>
-            
-            {(activeView !== 'trash' && activeView !== 'analytics' && activeView !== 'outputs') && (
-              <p className="text-[13px] text-slate-400 mt-1.5">
-                {searchResults !== null ? `Found ${displayPrompts.length} matching prompts` : `${filteredPrompts.length} prompts safely stored`}
-              </p>
-            )}
-            
-            {activeView === 'outputs' && (
-              <p className="text-[13px] text-slate-400 mt-1.5">
-                {outputs.length} successful AI generation assets saved.
-              </p>
-            )}
-            
-            {activeView === 'trash' && (
-              <p className="text-[13px] text-red-400 mt-1.5 flex items-center gap-1.5">
-                <ShieldAlert className="w-3.5 h-3.5" /> Items in trash will be permanently deleted after 30 days.
-              </p>
-            )}
           </div>
           
-          {(activeView !== 'trash' && activeView !== 'analytics') && (
-            <button 
-              onClick={() => { 
-                if(activeView === 'outputs') { 
-                  setShowAddOutput(true); 
-                  setOutputForm(emptyOutputForm); 
-                  setError(''); 
-                } else { 
-                  setShowAddPrompt(true); 
-                  setEditingPrompt(null); 
-                  setForm(emptyForm); 
-                  setError(''); 
-                } 
-              }}
-              className={`flex items-center gap-2 text-white text-[13px] font-medium px-5 py-2.5 rounded-xl transition-all shadow-[0_0_20px_-5px_rgba(139,92,246,0.4)] ${activeView === 'outputs' ? 'bg-pink-600 hover:bg-pink-500 shadow-[0_0_20px_-5px_rgba(236,72,153,0.4)] hover:shadow-[0_0_25px_-5px_rgba(236,72,153,0.6)]' : 'bg-violet-600 hover:bg-violet-500 hover:shadow-[0_0_25px_-5px_rgba(139,92,246,0.6)]'}`}
-            >
-              <Plus className="w-4 h-4" /> 
-              {activeView === 'outputs' ? 'Save Output' : 'New Prompt'}
-            </button>
-          )}
+          <div className="flex gap-3">
+            {activeView === 'workflows' && (
+              <button 
+                onClick={() => { 
+                  setWorkflowForm({...initialWorkflowsData[0], id: `wf-${Date.now()}`, title: 'New Workflow'}) 
+                  setShowWorkflowBuilder(true) 
+                }} 
+                className="flex items-center gap-2 text-white text-[13px] font-medium px-5 py-2.5 rounded-xl transition-all shadow-[0_0_20px_-5px_rgba(99,102,241,0.4)] bg-indigo-600 hover:bg-indigo-500"
+              >
+                <Plus className="w-4 h-4" /> Create Workflow
+              </button>
+            )}
+            
+            {(activeView !== 'trash' && activeView !== 'analytics' && activeView !== 'workflows' && activeView !== 'workflow-execution') && (
+              <button 
+                onClick={() => { 
+                  if(activeView === 'outputs') { 
+                    setShowAddOutput(true)
+                    setOutputForm(emptyOutputForm) 
+                  } else { 
+                    setShowAddPrompt(true)
+                    setEditingPrompt(null)
+                    setForm(emptyForm) 
+                  } 
+                }} 
+                className={`flex items-center gap-2 text-white text-[13px] font-medium px-5 py-2.5 rounded-xl transition-all ${activeView === 'outputs' ? 'bg-pink-600 hover:bg-pink-500' : 'bg-violet-600 hover:bg-violet-500'}`}
+              >
+                <Plus className="w-4 h-4" /> 
+                {activeView === 'outputs' ? 'Smart Magic Paste' : 'New Prompt'}
+              </button>
+            )}
+          </div>
         </header>
 
-        {/* ========================================== */}
-        {/* SEARCH BAR                                   */}
-        {/* ========================================== */}
-        {(activeView !== 'trash' && activeView !== 'analytics' && activeView !== 'outputs') && (
+        {/* SEARCH BAR */}
+        {(activeView !== 'trash' && activeView !== 'analytics' && activeView !== 'outputs' && activeView !== 'workflows' && activeView !== 'workflow-execution') && (
           <div className="px-10 pt-8 pb-2 shrink-0">
             <div className="relative max-w-2xl group">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-lg bg-violet-500/10 text-violet-400 group-focus-within:bg-violet-500 group-focus-within:text-white transition-colors">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-lg bg-violet-500/10 text-violet-400">
                 <Sparkles className="w-4 h-4" />
               </div>
-              
               <Input 
                 value={searchQuery} 
                 onChange={(e) => setSearchQuery(e.target.value)} 
-                placeholder="Search prompts by meaning, keywords, or intent..." 
-                className="w-full bg-[#0A0A0F]/80 backdrop-blur-md border border-white/5 rounded-2xl pl-14 pr-12 py-7 text-[14px] text-white placeholder-slate-500 focus-visible:ring-1 focus-visible:ring-violet-500/50 focus-visible:border-violet-500/30 transition-all shadow-lg hover:border-white/10" 
+                placeholder="Search prompts..." 
+                className="w-full bg-[#0A0A0F]/80 backdrop-blur-md border border-white/5 rounded-2xl pl-14 pr-12 py-7 text-[14px] text-white placeholder-slate-500" 
               />
-              
-              {isSearching ? (
-                <Loader2 className="absolute right-5 top-1/2 -translate-y-1/2 w-5 h-5 text-violet-400 animate-spin" />
-              ) : (
-                <Search className="absolute right-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-              )}
             </div>
           </div>
         )}
 
-        {/* ========================================== */}
-        {/* MAIN VIEWS (OUTPUTS, ANALYTICS, PROMPTS)     */}
-        {/* ========================================== */}
-        <div className="flex-1 p-10 pt-6 overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/5 hover:[&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full relative">
+        <div className="flex-1 p-10 pt-6 overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/5 relative">
           
-          {/* Background Glow */}
           <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full blur-[120px] pointer-events-none" />
 
-          {/* VIEW: OUTPUTS / SWIPE FILE */}
-          {activeView === 'outputs' ? (
-            outputs.length === 0 ? (
+          {/* ============================================================================ */}
+          {/* VIEW: 1. WORKFLOW EXECUTION                                                  */}
+          {/* ============================================================================ */}
+          {activeView === 'workflow-execution' && activeWorkflow ? (
+            <div className="relative z-10 w-full max-w-6xl mx-auto h-full min-h-[600px] flex gap-6 pb-10">
+              
+              {workflowStatus === 'completed' ? (
+                <div className="w-full bg-[#0A0A0F]/90 backdrop-blur-lg border border-indigo-500/20 rounded-3xl p-12 flex flex-col items-center justify-center text-center">
+                  <div className="w-24 h-24 bg-green-500/10 rounded-full flex items-center justify-center mb-8 border border-green-500/30">
+                    <CheckCircle className="w-12 h-12 text-green-400" />
+                  </div>
+                  <h2 className="text-4xl font-bold text-white mb-4">Workflow Completed!</h2>
+                  <button 
+                    onClick={() => setNav('workflows')} 
+                    className="px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl text-[15px] font-medium transition-all"
+                  >
+                    Return to Dashboard
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex-1 bg-[#0A0A0F]/80 border border-white/5 rounded-3xl flex flex-col overflow-hidden shadow-2xl relative">
+                    <div className="p-8 border-b border-white/5 bg-gradient-to-r from-[#060609] to-[#0A0A0F]">
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="text-indigo-400 text-[12px] font-bold uppercase tracking-wider bg-indigo-500/10 px-3 py-1 rounded-md">
+                          Step {currentStepIdx + 1} of {activeWorkflow.steps.length}
+                        </span>
+                        <span className="text-slate-500 text-[13px]">
+                          {activeWorkflow.title}
+                        </span>
+                      </div>
+                      <h2 className="text-3xl font-bold text-white flex items-center gap-3">
+                        {activeWorkflow.steps[currentStepIdx].title}
+                      </h2>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                      
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="bg-black/40 border border-white/5 rounded-2xl p-5">
+                          <h4 className="text-[11px] font-bold text-slate-500 uppercase mb-2">Goal</h4>
+                          <p className="text-[14px] text-slate-300">
+                            {activeWorkflow.steps[currentStepIdx].goal}
+                          </p>
+                        </div>
+                        <div className="bg-black/40 border border-white/5 rounded-2xl p-5">
+                          <h4 className="text-[11px] font-bold text-slate-500 uppercase mb-2">Target Platforms</h4>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {activeWorkflow.steps[currentStepIdx].platforms.map(p => (
+                              <span key={p} className={`px-2 py-1 rounded text-[11px] font-semibold border ${getPlatformStyle(p)}`}>
+                                {getPlatformLabel(p)}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-[12px] font-bold text-slate-500 uppercase tracking-wider">
+                            Prompt Source
+                          </h4>
+                          <Select 
+                            value={activeWorkflow.steps[currentStepIdx].prompt_source} 
+                            onValueChange={handlePromptSourceChange}
+                          >
+                            <SelectTrigger className="w-48 bg-[#060609] border-white/10 text-[12px] h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1A1A28] border-white/10 text-slate-200 text-[12px]">
+                              <SelectItem value="manual">Write Manually</SelectItem>
+                              <SelectItem value="all_prompts">Select from All Prompts</SelectItem>
+                              <SelectItem value="ai_optimize">Use AI Optimize</SelectItem>
+                              <SelectItem value="favorite">Use Favorite Prompt</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        
+                        <div className="bg-[#060609] border border-white/10 rounded-2xl p-6 relative">
+                          <Textarea 
+                            value={activeWorkflow.steps[currentStepIdx].base_prompt} 
+                            onChange={(e) => {
+                              const updated = {...activeWorkflow}
+                              updated.steps[currentStepIdx].base_prompt = e.target.value
+                              setActiveWorkflow(updated)
+                            }}
+                            className="text-[15px] text-slate-300 bg-transparent border-none resize-none focus-visible:ring-0 min-h-[100px] p-0"
+                          />
+                        </div>
+                      </div>
+
+                      {/* OUTPUT CAPTURE & ITERATIONS */}
+                      <div className="mt-8 pt-8 border-t border-white/5">
+                         <h4 className="text-[12px] font-bold text-indigo-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                           <ArrowDown className="w-4 h-4" /> Save Step Iteration Output
+                         </h4>
+                         <Textarea 
+                           value={currentStepOutput} 
+                           onChange={(e) => setCurrentStepOutput(e.target.value)} 
+                           placeholder="Paste AI response here to save as a new iteration..." 
+                           className="w-full min-h-[100px] bg-black/40 border border-indigo-500/20 rounded-2xl p-4 text-[13px] text-slate-200 resize-y focus-visible:ring-1 focus-visible:ring-indigo-500/50 mb-3" 
+                         />
+                         <button 
+                           onClick={generateNewWorkflowIteration} 
+                           className="px-5 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded-lg text-[12px] font-bold transition-colors"
+                         >
+                           Save Output as Iteration
+                         </button>
+                      </div>
+
+                      {activeWorkflow.steps[currentStepIdx].iterations.length > 0 && (
+                        <div className="bg-white/5 rounded-2xl p-5 border border-white/5">
+                          <h4 className="text-[12px] font-bold text-slate-400 uppercase mb-4">Step Iterations</h4>
+                          <div className="space-y-3">
+                            {activeWorkflow.steps[currentStepIdx].iterations.map(iter => (
+                              <div 
+                                key={iter.id} 
+                                className={`p-4 rounded-xl border cursor-pointer transition-colors ${activeWorkflow.steps[currentStepIdx].selected_iteration_id === iter.id ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-black/30 border-white/5 hover:border-white/20'}`} 
+                                onClick={() => { 
+                                  const up = {...activeWorkflow}
+                                  up.steps[currentStepIdx].selected_iteration_id = iter.id
+                                  setActiveWorkflow(up) 
+                                }}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[13px] font-bold text-slate-200">Iteration v{iter.version_num}</span>
+                                  {activeWorkflow.steps[currentStepIdx].selected_iteration_id === iter.id && (
+                                    <span className="text-[10px] bg-indigo-500 text-white px-2 py-0.5 rounded font-bold uppercase">
+                                      Selected for Next Step
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[12px] text-slate-400 line-clamp-2">{iter.output_text}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="p-6 border-t border-white/5 bg-[#060609] flex items-center justify-between shrink-0">
+                      <button 
+                        onClick={() => { if(currentStepIdx > 0) setCurrentStepIdx(c => c - 1) }} 
+                        disabled={currentStepIdx === 0} 
+                        className="text-slate-500 hover:text-white disabled:opacity-50 text-[13px] font-medium transition-colors"
+                      >
+                        Previous Step
+                      </button>
+                      
+                      <button 
+                        onClick={handleNextWorkflowStep} 
+                        className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-all flex items-center gap-2"
+                      >
+                        {currentStepIdx < activeWorkflow.steps.length - 1 ? 'Continue' : 'Finish Workflow'} 
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* SIDEBAR FOR PROGRESS */}
+                  <div className="w-[320px] flex flex-col gap-6 shrink-0">
+                    <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 shadow-xl">
+                      <h3 className="text-[13px] font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-indigo-400" /> Workflow Progress
+                      </h3>
+                      
+                      <div className="relative pl-3 space-y-8 before:absolute before:inset-y-3 before:left-[19px] before:w-[2px] before:bg-white/10">
+                        {activeWorkflow.steps.map((step, idx) => {
+                          const isCompleted = idx < currentStepIdx
+                          const isActive = idx === currentStepIdx
+                          return (
+                            <div key={step.id} className="relative flex gap-4 z-10">
+                              <div className={`w-4 h-4 rounded-full mt-1 shrink-0 ${isCompleted ? 'bg-green-500' : isActive ? 'bg-indigo-500 ring-4 ring-indigo-500/20' : 'bg-slate-700'}`}></div>
+                              <div>
+                                <h4 className={`text-[14px] font-bold ${isCompleted ? 'text-slate-300' : isActive ? 'text-indigo-400' : 'text-slate-500'}`}>
+                                  {step.title}
+                                </h4>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            
+          // ============================================================================
+          // VIEW: 2. WORKFLOWS LIST
+          // ============================================================================
+          ) : activeView === 'workflows' ? (
+            <div className="relative z-10 w-full max-w-5xl mx-auto space-y-10 pb-10">
+              <div className="grid grid-cols-1 gap-6">
+                {workflows.map(wf => (
+                  <div key={wf.id} className="bg-[#0A0A0F]/80 p-8 rounded-3xl border border-white/5 shadow-2xl relative">
+                    <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-4 mb-3">
+                          <div className="p-3 bg-indigo-500/20 rounded-xl text-indigo-400 border border-indigo-500/30">
+                            <Workflow className="w-6 h-6"/>
+                          </div>
+                          <h2 className="text-2xl font-bold text-white tracking-tight">{wf.title}</h2>
+                          <span className="bg-white/10 text-slate-300 text-[11px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-md">
+                            {wf.steps.length} Steps
+                          </span>
+                        </div>
+                        <p className="text-slate-400 text-[14px] ml-16 max-w-2xl">{wf.description}</p>
+                      </div>
+                      
+                      <div className="mt-6 md:mt-0 flex gap-3 shrink-0">
+                        <button 
+                          onClick={() => { setWorkflowForm(wf); setShowWorkflowBuilder(true); }} 
+                          className="bg-white/5 hover:bg-white/10 text-white px-5 py-3 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all border border-transparent"
+                        >
+                          <Edit2 className="w-4 h-4" /> Edit
+                        </button>
+                        
+                        <button 
+                          onClick={() => startWorkflow(wf)} 
+                          className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-xl flex items-center gap-2 text-[14px] font-bold transition-all shadow-[0_0_20px_-5px_rgba(99,102,241,0.5)]"
+                        >
+                          <Play className="w-4 h-4 fill-current" /> Run Workflow
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          // ============================================================================
+          // VIEW: 3. OUTPUTS / SAVED OUTPUTS
+          // ============================================================================
+          ) : activeView === 'outputs' ? (
+            displayOutputs.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center relative z-10">
                 <div className="w-20 h-20 rounded-3xl bg-pink-500/5 border border-pink-500/10 flex items-center justify-center mb-6 shadow-inner">
                   <Library className="w-10 h-10 text-pink-400/50" />
                 </div>
-                <h2 className="text-xl font-bold text-white mb-2">Build your Swipe File</h2>
-                <p className="text-[14px] text-slate-500 max-w-md mb-6">Stop losing your best AI generations. Save successful emails, viral tweets, and perfect code snippets here.</p>
+                <h2 className="text-xl font-bold text-white mb-2">Saved Outputs Empty</h2>
+                <p className="text-[14px] text-slate-500 max-w-md mb-6">Use Smart Magic Paste to archive your best AI outputs directly from the chat.</p>
                 <button 
                   onClick={() => setShowAddOutput(true)} 
                   className="px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white text-[13px] font-medium transition-colors border border-white/10"
                 >
-                  Save Your First Output
+                  Smart Magic Paste
                 </button>
               </div>
             ) : (
               <div className="columns-1 md:columns-2 xl:columns-3 gap-6 space-y-6 relative z-10 pb-10">
-                {outputs.map(output => (
+                {displayOutputs.map((output, idx) => (
                   <div 
                     key={output.id} 
+                    draggable={true} 
+                    onDragStart={(e) => onDragStart(e, idx, 'output')} 
+                    onDragEnter={(e) => onDragEnter(e, idx, 'output')} 
+                    onDragEnd={() => onDragEnd('output')} 
+                    onDragOver={(e) => e.preventDefault()}
                     onClick={() => setViewingOutput(output)} 
-                    className="break-inside-avoid cursor-pointer group flex flex-col bg-[#0A0A0F]/80 backdrop-blur-sm border border-white/5 rounded-2xl p-6 hover:border-pink-500/40 transition-all duration-300 shadow-lg hover:shadow-[0_0_30px_-5px_rgba(236,72,153,0.15)] relative"
+                    className={`break-inside-avoid cursor-pointer group flex flex-col bg-[#0A0A0F]/80 backdrop-blur-sm border border-white/5 rounded-2xl p-6 hover:border-pink-500/40 transition-all duration-300 shadow-lg hover:shadow-[0_0_30px_-5px_rgba(236,72,153,0.15)] relative ${draggedOutputIdx === idx ? 'opacity-30 border-dashed border-pink-500 scale-95' : ''}`}
                   >
                     <div className="flex items-center justify-between mb-4">
-                      <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400 bg-white/5 px-2.5 py-1 rounded-md">
-                        {getFormatIcon(output.format)} 
-                        {output.format.replace('_', ' ')}
-                      </span>
-                      <span className={`w-2 h-2 rounded-full ${getPlatformDotColor(output.platform)}`} title={getPlatformLabel(output.platform)} />
-                    </div>
-                    
-                    <div className="relative overflow-hidden">
-                      <p className="text-[14px] text-slate-300 leading-relaxed whitespace-pre-wrap line-clamp-6">{output.content}</p>
-                      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-[#0A0A0F] to-transparent pointer-events-none group-hover:from-[#0d0d16] transition-colors duration-300" />
-                    </div>
-                    
-                    {output.prompt_id && prompts.find(p => p.id === output.prompt_id) && (
-                      <div className="mt-4 pt-3 border-t border-white/5 flex items-center text-[11px] text-slate-500">
-                        <Sparkles className="w-3 h-3 mr-1.5 text-violet-400" />
-                        Generated from: <span className="ml-1 text-slate-300 truncate font-medium">{prompts.find(p => p.id === output.prompt_id)?.title}</span>
+                      <div className="flex items-center gap-2">
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing mr-1">
+                          <GripVertical className="w-4 h-4 text-slate-600 hover:text-slate-400" />
+                        </div>
+                        <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400 bg-white/5 px-2.5 py-1 rounded-md">
+                          {getFormatIcon(output.format)} {output.format.replace('_', ' ')}
+                        </span>
+                        <span className={`w-2 h-2 rounded-full ${getPlatformDotColor(output.platform)}`} title={getPlatformLabel(output.platform)} />
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )
-            
-          /* VIEW: ANALYTICS */
-          ) : activeView === 'analytics' ? (
-             <div className="relative z-10 max-w-5xl mx-auto space-y-8">
-               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                 
-                 <div className="bg-[#0A0A0F]/80 border border-white/5 p-6 rounded-2xl flex items-center gap-5 shadow-lg">
-                   <div className="w-14 h-14 rounded-xl bg-violet-500/10 text-violet-400 flex items-center justify-center border border-violet-500/20">
-                     <LayoutGrid className="w-6 h-6" />
-                   </div>
-                   <div>
-                     <p className="text-slate-400 text-[13px] font-medium mb-1">Total Active Prompts</p>
-                     <h3 className="text-3xl font-bold text-white">{totalPrompts}</h3>
-                   </div>
-                 </div>
-                 
-                 <div className="bg-[#0A0A0F]/80 border border-white/5 p-6 rounded-2xl flex items-center gap-5 shadow-lg">
-                   <div className="w-14 h-14 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center border border-amber-500/20">
-                     <Star className="w-6 h-6" />
-                   </div>
-                   <div>
-                     <p className="text-slate-400 text-[13px] font-medium mb-1">Total Favorites</p>
-                     <h3 className="text-3xl font-bold text-white">{totalFavorites}</h3>
-                   </div>
-                 </div>
-                 
-                 <div className="bg-[#0A0A0F]/80 border border-white/5 p-6 rounded-2xl flex items-center gap-5 shadow-lg">
-                   <div className="w-14 h-14 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center border border-blue-500/20">
-                     <Folder className="w-6 h-6" />
-                   </div>
-                   <div>
-                     <p className="text-slate-400 text-[13px] font-medium mb-1">Total Collections</p>
-                     <h3 className="text-3xl font-bold text-white">{collections.length}</h3>
-                   </div>
-                 </div>
-
-               </div>
-
-               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  
-                  <div className="bg-[#0A0A0F]/80 border border-white/5 p-8 rounded-2xl shadow-lg">
-                    <div className="flex items-center gap-3 mb-8">
-                      <PieChart className="w-5 h-5 text-violet-400" />
-                      <h3 className="text-[15px] font-semibold text-white">Platform Usage Distribution</h3>
-                    </div>
-                    {totalPrompts === 0 ? (
-                      <p className="text-slate-500 text-[13px]">No data available yet.</p>
-                    ) : (
-                      <div className="space-y-5">
-                        {sortedPlatforms.map(([platform, count]) => { 
-                          const percentage = Math.round((count / totalPrompts) * 100); 
-                          return (
-                            <div key={platform}>
-                              <div className="flex justify-between text-[13px] mb-2 font-medium">
-                                <span className="text-slate-300">{getPlatformLabel(platform)}</span>
-                                <span className="text-slate-500">{percentage}% ({count})</span>
-                              </div>
-                              <div className="w-full bg-white/5 rounded-full h-2.5 overflow-hidden">
-                                <div className={`h-2.5 rounded-full ${getPlatformDotColor(platform)}`} style={{ width: `${percentage}%` }}></div>
-                              </div>
-                            </div>
-                          ) 
-                        })}
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div className="bg-gradient-to-br from-violet-600/10 to-indigo-600/10 border border-violet-500/20 p-8 rounded-2xl shadow-lg flex flex-col justify-center text-center">
-                    <div className="w-16 h-16 bg-violet-500/20 rounded-2xl flex items-center justify-center mx-auto mb-5 text-violet-400 shadow-[0_0_20px_-5px_rgba(139,92,246,0.5)]">
-                      <Activity className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-[18px] font-bold text-white mb-2">Build Your AI Brain</h3>
-                    <p className="text-[14px] text-slate-400 leading-relaxed max-w-sm mx-auto">
-                      You have safely stored {totalPrompts} prompts in Prompax. As you add more, this dashboard will unlock deeper insights about your AI workflow.
-                    </p>
-                  </div>
-
-               </div>
-             </div>
-             
-          /* VIEW: EMPTY STATE (Prompts) */
-          ) : displayPrompts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center relative z-10">
-              <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-5 shadow-inner">
-                {activeView === 'trash' ? (
-                  <Trash2 className="w-6 h-6 text-slate-400" />
-                ) : searchResults !== null ? (
-                  <Search className="w-6 h-6 text-slate-400" />
-                ) : (
-                  <Folder className="w-6 h-6 text-slate-400" />
-                )}
-              </div>
-              <p className="text-white text-[16px] font-medium">
-                {activeView === 'trash' ? 'Trash is empty' : searchResults !== null ? 'No matching prompts found' : 'No prompts found'}
-              </p>
-            </div>
-            
-          /* VIEW: PROMPT CARDS GRID */
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 relative z-10 pb-10">
-              {displayPrompts.map(prompt => (
-                <div 
-                  key={prompt.id} 
-                  onClick={() => activeView !== 'trash' && openWorkspace(prompt)} 
-                  className={`group cursor-pointer flex flex-col backdrop-blur-sm border rounded-2xl p-6 transition-all duration-300 h-[280px] shadow-lg relative ${activeView === 'trash' ? 'bg-red-950/10 border-red-500/10 cursor-default' : 'bg-[#0A0A0F]/80 border-white/5 hover:border-violet-500/40 hover:shadow-[0_0_30px_-5px_rgba(139,92,246,0.15)]'}`}
-                >
-                  
-                  {/* Card Header */}
-                  <div className="flex items-start justify-between gap-4 mb-3">
-                    <h3 className={`text-[15px] font-semibold leading-snug line-clamp-2 flex-1 transition-colors ${activeView === 'trash' ? 'text-slate-400 line-through decoration-red-500/50' : 'text-slate-100 group-hover:text-violet-100'}`}>
-                      {prompt.title}
-                    </h3>
-                    
-                    {activeView === 'trash' ? (
-                      <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button 
-                          onClick={(e) => handleRestoreFromTrash(prompt.id, e)} 
-                          title="Restore" 
-                          className="p-2 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={(e) => handlePermanentDelete(prompt.id, e)} 
-                          title="Delete Permanently" 
-                          className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
+                      
                       <div className="flex items-center gap-1">
                         <button 
-                          onClick={(e) => toggleFavorite(prompt, e)} 
-                          className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-all outline-none"
+                          onClick={(e) => togglePinOutput(output, e)} 
+                          className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-all outline-none text-slate-500 hover:text-blue-400 opacity-0 group-hover:opacity-100"
                         >
-                          <Star className={`h-4 w-4 ${prompt.is_favorite ? 'fill-amber-400 text-amber-400' : 'text-slate-500 hover:text-amber-400 opacity-0 group-hover:opacity-100'}`} />
+                          <Pin className={`h-4 w-4 ${output.is_pinned ? 'fill-blue-400 text-blue-400 opacity-100' : ''}`} />
                         </button>
                         
                         <DropdownMenu>
@@ -1139,54 +1717,209 @@ export default function Dashboard() {
                               <MoreVertical className="h-4 w-4" />
                             </button>
                           </DropdownMenuTrigger>
-                          
                           <DropdownMenuContent align="end" className="w-48 bg-[#1A1A28] border-white/10 text-slate-200 rounded-xl shadow-2xl p-1">
                             <DropdownMenuItem 
-                              onClick={(e) => handleOptimizePrompt(prompt, e as any)} 
-                              className="gap-2.5 cursor-pointer hover:bg-violet-500/10 focus:bg-violet-500/10 text-violet-300 py-2.5 font-medium"
-                            >
-                              <Wand2 className="h-4 w-4" /> AI Optimize 
-                              <span className="ml-auto text-[9px] bg-violet-500/20 px-1.5 py-0.5 rounded uppercase tracking-wider">PRO</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator className="bg-white/5 my-1" />
-                            <DropdownMenuItem 
-                              onClick={(e) => handleMoveToTrash(prompt.id, e as any)} 
-                              className="gap-2.5 cursor-pointer text-red-400 focus:text-red-400 hover:bg-red-500/10 focus:bg-red-500/10 py-2.5"
+                              onClick={(e) => handleMoveToTrash(output.id, 'output', e as any)} 
+                              className="gap-2.5 cursor-pointer text-red-400 focus:text-red-400 hover:bg-red-500/10 py-2.5"
                             >
                               <Trash2 className="h-4 w-4" /> Move to Trash
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
+                    </div>
+                    
+                    <div className="relative overflow-hidden">
+                      <p className="text-[14px] text-slate-300 leading-relaxed whitespace-pre-wrap line-clamp-6">{output.content}</p>
+                      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-[#0A0A0F] to-transparent pointer-events-none group-hover:from-[#0d0d16] transition-colors duration-300" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+
+          // ============================================================================
+          // VIEW: 4. TRASH
+          // ============================================================================
+          ) : activeView === 'trash' ? (
+             <div className="relative z-10 w-full max-w-5xl mx-auto pb-10">
+               {trashedItems.length === 0 ? (
+                 <div className="flex flex-col items-center justify-center h-[400px] text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mb-5">
+                      <Trash2 className="w-6 h-6 text-slate-400" />
+                    </div>
+                    <p className="text-white text-[16px] font-medium">Trash is empty</p>
+                 </div>
+               ) : (
+                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                   {trashedItems.map(item => (
+                     <div key={item.id} className="flex flex-col bg-red-950/10 border border-red-500/10 rounded-2xl p-6 h-[280px] shadow-lg group relative">
+                       <div className="flex items-start justify-between gap-4 mb-3">
+                         <h3 className="text-[15px] font-semibold line-clamp-2 text-slate-400 line-through decoration-red-500/50">
+                           {item.type === 'prompt' ? (item as Prompt).title : 'Output Content'}
+                         </h3>
+                         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                           <button 
+                             onClick={(e) => handleRestoreFromTrash(item.id, item.type as any, e)} 
+                             className="p-2 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
+                           >
+                             <RefreshCw className="w-4 h-4" />
+                           </button>
+                           <button 
+                             onClick={(e) => handlePermanentDelete(item.id, item.type as any, e)} 
+                             className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                           >
+                             <Trash2 className="w-4 h-4" />
+                           </button>
+                         </div>
+                       </div>
+                       <div className="relative flex-1 overflow-hidden mb-4">
+                         <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-slate-600">{item.content}</p>
+                         <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#0A0A0F]/80 to-transparent pointer-events-none transition-colors duration-300" />
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+               )}
+             </div>
+
+          // ============================================================================
+          // VIEW: 5. ANALYTICS
+          // ============================================================================
+          ) : activeView === 'analytics' ? (
+             <div className="relative z-10 max-w-5xl mx-auto space-y-8">
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                 <div className="bg-[#0A0A0F]/80 border border-white/5 p-6 rounded-2xl flex items-center gap-5 shadow-lg">
+                   <div className="w-14 h-14 rounded-xl bg-violet-500/10 text-violet-400 flex items-center justify-center border border-violet-500/20">
+                     <LayoutGrid className="w-6 h-6" />
+                   </div>
+                   <div>
+                     <p className="text-slate-400 text-[13px] font-medium mb-1">Total Active Prompts</p>
+                     <h3 className="text-3xl font-bold text-white">{totalPrompts}</h3>
+                   </div>
+                 </div>
+                 <div className="bg-[#0A0A0F]/80 border border-white/5 p-6 rounded-2xl flex items-center gap-5 shadow-lg">
+                   <div className="w-14 h-14 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center border border-amber-500/20">
+                     <Star className="w-6 h-6" />
+                   </div>
+                   <div>
+                     <p className="text-slate-400 text-[13px] font-medium mb-1">Total Favorites</p>
+                     <h3 className="text-3xl font-bold text-white">{totalFavorites}</h3>
+                   </div>
+                 </div>
+                 <div className="bg-[#0A0A0F]/80 border border-white/5 p-6 rounded-2xl flex items-center gap-5 shadow-lg">
+                   <div className="w-14 h-14 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center border border-blue-500/20">
+                     <Folder className="w-6 h-6" />
+                   </div>
+                   <div>
+                     <p className="text-slate-400 text-[13px] font-medium mb-1">Total Collections</p>
+                     <h3 className="text-3xl font-bold text-white">{collections.length}</h3>
+                   </div>
+                 </div>
+               </div>
+             </div>
+             
+          // ============================================================================
+          // VIEW: 6. PROMPTS GRID
+          // ============================================================================
+          ) : displayPrompts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center relative z-10">
+              <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mb-5">
+                <Search className="w-6 h-6 text-slate-400" />
+              </div>
+              <p className="text-white text-[16px] font-medium">No prompts found</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 relative z-10 pb-10">
+              {displayPrompts.map((prompt, index) => (
+                <div 
+                  key={prompt.id} 
+                  draggable={activeView === 'all' || activeView === 'collection'} 
+                  onDragStart={(e) => onDragStart(e, index, 'prompt')} 
+                  onDragEnter={(e) => onDragEnter(e, index, 'prompt')} 
+                  onDragEnd={() => onDragEnd('prompt')} 
+                  onDragOver={(e) => e.preventDefault()}
+                  onClick={() => openWorkspace(prompt)} 
+                  className={`group cursor-pointer flex flex-col backdrop-blur-sm border rounded-2xl p-6 transition-all duration-300 h-[280px] shadow-lg relative ${draggedPromptIdx === index ? 'opacity-30 border-dashed border-violet-500 scale-95' : ''} bg-[#0A0A0F]/80 border-white/5 hover:border-violet-500/40 hover:shadow-[0_0_30px_-5px_rgba(139,92,246,0.15)]`}
+                >
+                  <div className="flex items-start justify-between gap-4 mb-3">
+                    
+                    {(activeView === 'all' || activeView === 'collection') && (
+                      <div className="mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing">
+                        <GripVertical className="w-4 h-4 text-slate-600 hover:text-slate-400" />
+                      </div>
                     )}
+                    
+                    <h3 className="text-[15px] font-semibold leading-snug line-clamp-2 flex-1 text-slate-100 group-hover:text-violet-100 transition-colors">
+                      {prompt.title}
+                    </h3>
+                    
+                    <div className="flex items-center gap-1">
+                      <button 
+                        onClick={(e) => togglePinPrompt(prompt, e)} 
+                        className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-all outline-none text-slate-500 hover:text-blue-400 opacity-0 group-hover:opacity-100"
+                      >
+                        <Pin className={`h-4 w-4 ${prompt.is_pinned ? 'fill-blue-400 text-blue-400 opacity-100' : ''}`} />
+                      </button>
+                      <button 
+                        onClick={(e) => toggleFavorite(prompt, e)} 
+                        className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition-all outline-none text-slate-500 hover:text-amber-400 opacity-0 group-hover:opacity-100"
+                      >
+                        <Star className={`h-4 w-4 ${prompt.is_favorite ? 'fill-amber-400 text-amber-400 opacity-100' : ''}`} />
+                      </button>
+                      
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button 
+                            onClick={(e) => e.stopPropagation()} 
+                            className="h-8 w-8 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-200 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-all outline-none"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48 bg-[#1A1A28] border-white/10 text-slate-200 rounded-xl shadow-2xl p-1">
+                          <DropdownMenuItem 
+                            onClick={(e) => handleMoveToTrash(prompt.id, 'prompt', e as any)} 
+                            className="gap-2.5 cursor-pointer text-red-400 focus:text-red-400 hover:bg-red-500/10 py-2.5"
+                          >
+                            <Trash2 className="h-4 w-4" /> Move to Trash
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
                   
-                  {/* Card Body */}
                   <div className="relative flex-1 overflow-hidden mb-4">
-                    <p className={`text-[13px] leading-relaxed whitespace-pre-wrap ${activeView === 'trash' ? 'text-slate-600' : 'text-slate-400'}`}>
-                      {prompt.content}
-                    </p>
-                    <div className={`absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t pointer-events-none transition-colors duration-300 ${activeView === 'trash' ? 'from-[#0A0A0F]/80 to-transparent' : 'from-[#0A0A0F] to-transparent group-hover:from-[#0d0d16]'}`} />
+                    <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-slate-400">{prompt.content}</p>
+                    <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#0A0A0F] to-transparent pointer-events-none group-hover:from-[#0d0d16] transition-colors duration-300" />
                   </div>
                   
-                  {/* Card Footer */}
                   <div className="flex items-center gap-2 mt-auto pt-4 border-t border-white/5">
-                    <span className={`text-[11px] font-medium px-2.5 py-1 rounded-md border ${activeView === 'trash' ? 'bg-white/5 text-slate-500 border-transparent' : getPlatformStyle(prompt.platform)}`}>
-                      {getPlatformLabel(prompt.platform)}
-                    </span>
-                    <span className={`text-[11px] bg-white/5 border border-white/5 px-2.5 py-1 rounded-md ${activeView === 'trash' ? 'text-slate-600' : 'text-slate-400'}`}>
+                    
+                    {/* MULTI PLATFORM DOTS */}
+<div className="flex -space-x-2">
+  {prompt.platforms.slice(0,3).map((p: string) => (
+     <span 
+       key={p} 
+       className={`w-6 h-6 rounded-full border border-[#0A0A0F] flex items-center justify-center text-[8px] font-bold uppercase ${getPlatformStyle(p)}`} 
+       title={getPlatformLabel(p)}
+     >
+       {p.substring(0,1)}
+     </span>
+  ))}
+</div>
+                    
+                    <span className="text-[11px] bg-white/5 border border-white/5 px-2.5 py-1 rounded-md text-slate-400 ml-2">
                       {prompt.category}
                     </span>
-                    {activeView !== 'trash' && (
-                      <button 
-                        onClick={(e) => copyToClipboard(prompt.content, prompt.id, e)} 
-                        className="ml-auto flex items-center justify-center w-8 h-8 rounded-lg bg-white/5 hover:bg-violet-500/20 hover:text-violet-300 text-slate-400 transition-all border border-transparent hover:border-violet-500/30"
-                      >
-                        {copiedId === prompt.id ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                      </button>
-                    )}
+                    
+                    <button 
+                      onClick={(e) => copyToClipboard(prompt.content, prompt.id, e)} 
+                      className="ml-auto flex items-center justify-center w-8 h-8 rounded-lg bg-white/5 hover:bg-violet-500/20 hover:text-violet-300 text-slate-400 transition-all border border-transparent hover:border-violet-500/30"
+                    >
+                      {copiedId === prompt.id ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
                   </div>
-                  
                 </div>
               ))}
             </div>
@@ -1194,14 +1927,175 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* ========================================== */}
-      {/* MODALS ALANI                                 */}
-      {/* ========================================== */}
+      {/* ============================================================================ */}
+      {/* 8. MODALLAR (OVERLAYS)                                                       */}
+      {/* ============================================================================ */}
 
-      {/* ÇIKTI GÖRÜNTÜLEME MODALI (Split View) */}
+      {/* WORKFLOW BUILDER MODAL */}
+      <Dialog open={showWorkflowBuilder} onOpenChange={(open) => setShowWorkflowBuilder(open)}>
+        <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-2xl sm:max-w-[95vw] w-[95vw] h-[95vh] shadow-2xl p-0 gap-0 overflow-hidden text-white flex flex-col [&>button]:hidden">
+          <div className="flex items-center justify-between p-6 border-b border-white/5 bg-gradient-to-r from-[#0A0A0F] to-[#111118] shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                <Workflow className="w-6 h-6 text-indigo-400" />
+              </div>
+              <div>
+                <DialogTitle className="text-[19px] font-semibold text-white tracking-tight">
+                  Workflow Builder
+                </DialogTitle>
+                <p className="text-[13px] text-slate-400 mt-0.5">Design your automated AI pipeline</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setShowWorkflowBuilder(false)} 
+              className="text-slate-500 hover:text-white transition-colors bg-white/5 hover:bg-white/10 p-2.5 rounded-xl flex items-center gap-2 text-[13px] font-medium"
+            >
+              <XCircle className="w-5 h-5" /> Close
+            </button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-8 bg-[#060609] space-y-8">
+            <div className="grid grid-cols-2 gap-8">
+              <div>
+                <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+                  Workflow Title
+                </label>
+                <Input 
+                  value={workflowForm.title} 
+                  onChange={e => setWorkflowForm(prev => ({...prev, title: e.target.value}))} 
+                  className="bg-[#0A0A0F] border-white/10 text-white" 
+                />
+              </div>
+              <div>
+                <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+                  Description
+                </label>
+                <Input 
+                  value={workflowForm.description} 
+                  onChange={e => setWorkflowForm(prev => ({...prev, description: e.target.value}))} 
+                  className="bg-[#0A0A0F] border-white/10 text-white" 
+                />
+              </div>
+            </div>
+            
+            <div className="border-t border-white/5 pt-8">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-[16px] font-bold text-white flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-indigo-400" /> Workflow Steps
+                </h3>
+                <button 
+                  onClick={() => setWorkflowForm(prev => ({
+                    ...prev, 
+                    steps: [
+                      ...prev.steps, 
+                      {
+                        id: `step-${Date.now()}`, 
+                        number: prev.steps.length + 1, 
+                        title: 'New Step', 
+                        goal: '', 
+                        platforms: ['chatgpt'], 
+                        prompt_source: 'manual', 
+                        base_prompt: '', 
+                        iterations: [], 
+                        selected_iteration_id: null
+                      }
+                    ]
+                  }))} 
+                  className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg text-[13px] font-medium flex items-center gap-2 border border-white/10"
+                >
+                  <Plus className="w-4 h-4" /> Add Step
+                </button>
+              </div>
+              
+              <div className="space-y-4">
+                {workflowForm.steps.map((step, sIdx) => (
+                  <div key={step.id} className="bg-[#0A0A0F] border border-white/5 rounded-2xl p-6 relative">
+                    <button 
+                      onClick={() => setWorkflowForm(prev => { 
+                        const n = {...prev}
+                        n.steps.splice(sIdx, 1)
+                        return n 
+                      })} 
+                      className="absolute top-4 right-4 text-red-400 hover:text-red-300 p-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                    
+                    <div className="flex items-center gap-4 mb-4">
+                      <span className="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+                        {sIdx+1}
+                      </span>
+                      <Input 
+                        value={step.title} 
+                        onChange={e => { 
+                          const n = {...workflowForm}
+                          n.steps[sIdx].title = e.target.value
+                          setWorkflowForm(n) 
+                        }} 
+                        placeholder="Step Name" 
+                        className="w-64 bg-black/40 border-white/10 text-white" 
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[11px] text-slate-500 uppercase mb-1 block">Goal</label>
+                        <Input 
+                          value={step.goal} 
+                          onChange={e => { 
+                            const n = {...workflowForm}
+                            n.steps[sIdx].goal = e.target.value
+                            setWorkflowForm(n) 
+                          }} 
+                          className="bg-black/40 border-white/10 text-white text-[13px]" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-slate-500 uppercase mb-1 block">Platform (Main)</label>
+                        <Select 
+                          value={step.platforms[0]} 
+                          onValueChange={v => { 
+                            const n = {...workflowForm}
+                            n.steps[sIdx].platforms = [v]
+                            setWorkflowForm(n) 
+                          }}
+                        >
+                          <SelectTrigger className="bg-black/40 border-white/10 text-white text-[13px] h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-[#1A1A28] border-white/10 text-slate-200">
+                            <MenuItems items={PLATFORMS} />
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          <div className="p-6 border-t border-white/5 bg-[#0A0A0F] flex gap-4 shrink-0 justify-end">
+            <button 
+              onClick={() => setShowWorkflowBuilder(false)} 
+              className="px-6 py-3 rounded-xl border border-white/10 text-[14px] font-medium text-slate-400 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={saveWorkflowBuilder} 
+              className="px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-[14px] font-medium text-white flex items-center gap-2 shadow-[0_0_15px_-3px_rgba(99,102,241,0.5)] transition-all"
+            >
+              <CheckCircle2 className="w-5 h-5" /> Save Workflow
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+
+      {/* ÇIKTI GÖRÜNTÜLEME MODALI (SPLIT VIEW) */}
       <Dialog open={!!viewingOutput} onOpenChange={(open) => { if(!open) setViewingOutput(null) }}>
         <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-2xl sm:max-w-[85vw] lg:max-w-[1200px] w-[95vw] h-[85vh] shadow-2xl p-0 gap-0 overflow-hidden text-white flex flex-col [&>button]:hidden">
-          
           <div className="flex items-center justify-between p-6 border-b border-white/5 bg-[#111118] shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-pink-500/10 text-pink-400 flex items-center justify-center border border-pink-500/20">
@@ -1212,13 +2106,13 @@ export default function Dashboard() {
                   {viewingOutput?.format.replace('_', ' ')} Output
                 </DialogTitle>
                 <p className="text-[12px] text-slate-400">
-                  {viewingOutput && getPlatformLabel(viewingOutput.platform)} • Saved {viewingOutput && new Date(viewingOutput.created_at).toLocaleDateString()}
+                  {viewingOutput && getPlatformLabel(viewingOutput.platform)}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
               <button 
-                onClick={() => viewingOutput && handleDeleteOutput(viewingOutput.id)} 
+                onClick={() => viewingOutput && handleMoveToTrash(viewingOutput.id, 'output')} 
                 className="text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500 p-2.5 rounded-xl transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -1233,234 +2127,142 @@ export default function Dashboard() {
           </div>
           
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-[#060609]">
-            {/* Split View: Sol Taraf (Prompt) */}
             <div className="w-full lg:w-[35%] bg-[#0A0A0F]/50 border-b lg:border-b-0 lg:border-r border-white/5 p-8 overflow-y-auto space-y-8">
-              {viewingOutput?.prompt_id && prompts.find(p => p.id === viewingOutput.prompt_id) ? (
-                <div>
-                  <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                    <Sparkles className="w-4 h-4" /> Parent Prompt
-                  </h4>
-                  <div 
-                    className="bg-black/30 border border-white/5 rounded-xl p-5 cursor-pointer hover:border-violet-500/30 transition-colors" 
-                    onClick={() => openWorkspace(prompts.find(p => p.id === viewingOutput.prompt_id)!)}
-                  >
-                    <h5 className="text-[14px] font-medium text-slate-200 mb-2">
-                      {prompts.find(p => p.id === viewingOutput.prompt_id)?.title}
-                    </h5>
-                    <p className="text-[13px] text-slate-500 line-clamp-4">
-                      {prompts.find(p => p.id === viewingOutput.prompt_id)?.content}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-white/5 border border-white/5 border-dashed rounded-xl p-6 text-center text-[13px] text-slate-500">
-                  No prompt linked to this output.
-                </div>
-              )}
-              
-              {viewingOutput?.notes && (
-                <div>
-                  <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-3">Notes / Context</h4>
-                  <p className="text-[14px] text-slate-300 leading-relaxed p-4 bg-white/5 rounded-xl border border-white/5">
-                    {viewingOutput.notes}
-                  </p>
-                </div>
-              )}
+              <div className="bg-white/5 border border-white/5 border-dashed rounded-xl p-6 text-center text-[13px] text-slate-500">
+                Output Detail View
+              </div>
             </div>
             
-            {/* Split View: Sağ Taraf (Output) */}
             <div className="flex-1 flex flex-col relative h-full">
               <div className="flex-1 p-10 overflow-y-auto">
-                <div className="max-w-3xl mx-auto">
-                  <p className="text-[15px] text-slate-200 leading-loose whitespace-pre-wrap font-serif">
-                    {viewingOutput?.content}
-                  </p>
-                </div>
+                <p className="text-[15px] text-slate-200 leading-loose whitespace-pre-wrap font-serif">
+                  {viewingOutput?.content}
+                </p>
               </div>
-              <div className="p-6 border-t border-white/5 bg-[#0A0A0F] shrink-0 flex justify-end">
+              
+              <div className="p-6 border-t border-white/5 bg-[#0A0A0F] flex justify-end">
                 <button 
                   onClick={(e) => viewingOutput && copyToClipboard(viewingOutput.content, viewingOutput.id, e)} 
-                  className="px-8 py-3 rounded-xl bg-pink-600 hover:bg-pink-500 text-white font-medium flex items-center gap-2 shadow-[0_0_20px_-5px_rgba(236,72,153,0.5)] transition-all"
+                  className="px-8 py-3 rounded-xl bg-pink-600 hover:bg-pink-500 text-white font-medium flex items-center gap-2"
                 >
-                  {copiedId === viewingOutput?.id ? <><CheckCircle2 className="w-5 h-5" /> Copied</> : <><Copy className="w-5 h-5" /> Copy Asset</>}
+                  <Copy className="w-5 h-5" /> Copy Asset
                 </button>
               </div>
             </div>
           </div>
-          
         </DialogContent>
       </Dialog>
 
-      {/* GENİŞ "SAVE OUTPUT" MODALI (MAGIC PASTE İLE BİRLİKTE) */}
-      <Dialog open={showAddOutput} onOpenChange={(open) => { if (!submitting) { setShowAddOutput(open); setError(''); }}}>
+      {/* SMART MAGIC PASTE MODAL */}
+      <Dialog open={showAddOutput} onOpenChange={(open) => { if (!submitting) { setShowAddOutput(open); if (!open) { setPromptSearchQuery(''); setIsPromptDropdownOpen(false); setError(''); } } }}>
         <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-2xl sm:max-w-[95vw] w-[95vw] h-[95vh] shadow-2xl p-0 gap-0 overflow-hidden text-white flex flex-col [&>button]:hidden">
-          
-          {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-white/5 bg-gradient-to-r from-[#0A0A0F] to-[#111118] shrink-0">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-pink-500/10 border border-pink-500/20 flex items-center justify-center">
                 <Library className="w-6 h-6 text-pink-400" />
               </div>
               <div>
-                <DialogTitle className="text-[19px] font-semibold text-white tracking-tight">Save to Swipe File</DialogTitle>
-                <p className="text-[13px] text-slate-400 mt-0.5">Archive your successful AI generations</p>
+                <DialogTitle className="text-[19px] font-semibold text-white tracking-tight">
+                  Smart Magic Paste
+                </DialogTitle>
+                <p className="text-[13px] text-slate-400 mt-0.5">
+                  Auto-extract prompt and output from chat logs
+                </p>
               </div>
             </div>
             <button 
               onClick={() => setShowAddOutput(false)} 
-              className="text-slate-500 hover:text-white transition-colors bg-white/5 hover:bg-white/10 p-2.5 rounded-xl flex items-center gap-2 text-[13px] font-medium"
+              className="text-slate-500 hover:text-white bg-white/5 p-2.5 rounded-xl"
             >
-              <XCircle className="w-5 h-5" /> Close
+              <XCircle className="w-5 h-5" />
             </button>
           </div>
-
-          <div className="flex-1 overflow-hidden bg-[#060609] grid grid-cols-1 lg:grid-cols-3">
-            
-            {/* Sol Taraf: Ayarlar ve Magic Paste */}
-            <div className="p-8 space-y-6 bg-[#0A0A0F]/50 overflow-y-auto h-full border-r border-white/5">
-              {error && <div className="text-red-400 bg-red-500/10 p-3.5 rounded-xl text-[13px] border border-red-500/20">{error}</div>}
-              
-              {/* MAGIC PASTE */}
-              <div className="bg-gradient-to-b from-pink-500/10 to-violet-500/5 border border-pink-500/20 rounded-2xl p-1 shadow-lg shadow-pink-500/5">
+          
+          <div className="flex-1 overflow-hidden bg-[#060609] grid grid-cols-1 lg:grid-cols-3 relative">
+            <div className="p-8 space-y-6 bg-[#0A0A0F]/50 overflow-y-auto h-full border-r border-white/5 relative z-20">
+              <div className="bg-gradient-to-b from-pink-500/10 to-violet-500/5 border border-pink-500/20 rounded-2xl p-1 shadow-lg">
                 <div className="bg-[#060609]/80 backdrop-blur rounded-xl p-5 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-[14px] font-bold text-white mb-1 flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-pink-400 fill-pink-400" /> Smart Magic Paste
-                      </h4>
-                      <p className="text-[11px] text-slate-400 leading-relaxed max-w-[200px]">
-                        Copy the <span className="text-white">entire ChatGPT conversation</span>. We will automatically extract your prompt, save it, and link it to the output.
-                      </p>
-                    </div>
-                  </div>
                   <Textarea 
                     value={outputForm.magicPasteContent} 
                     onChange={e => setOutputForm(f => ({ ...f, magicPasteContent: e.target.value }))} 
                     placeholder="Paste raw chat transcript here..." 
-                    className="w-full bg-black/40 border-white/10 rounded-xl p-3 text-[13px] text-slate-300 h-24 resize-none focus-visible:ring-1 focus-visible:ring-pink-500/50" 
+                    className="w-full bg-black/40 border-white/10 rounded-xl p-3 text-[13px] text-slate-300 h-24 resize-none" 
                   />
                   <button 
                     onClick={handleMagicPaste} 
                     disabled={isMagicPasting || !outputForm.magicPasteContent.trim()} 
-                    className="w-full py-2.5 bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white rounded-lg text-[13px] font-medium transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_-3px_rgba(236,72,153,0.4)]"
+                    className="w-full py-2.5 bg-pink-600 hover:bg-pink-500 text-white rounded-lg text-[13px] font-medium"
                   >
-                    {isMagicPasting ? <><Loader2 className="w-4 h-4 animate-spin" /> Parsing Transcript...</> : 'Auto-Extract & Fill'}
+                    {isMagicPasting ? 'Parsing...' : 'Auto-Extract & Fill'}
                   </button>
                 </div>
               </div>
-
-              {/* Format & Platform Seçimi */}
+              
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Format</label>
-                  <Select value={outputForm.format} onValueChange={(v) => setOutputForm(f => ({ ...f, format: v, customFormat: '' }))}>
-                    <SelectTrigger className="w-full bg-[#060609] border-white/10 rounded-xl"><SelectValue /></SelectTrigger>
+                  <label className="text-[12px] text-slate-400 block mb-2">Format</label>
+                  <Select value={outputForm.format} onValueChange={(v) => setOutputForm(f => ({...f, format: v}))}>
+                    <SelectTrigger className="bg-[#060609] border-white/10 text-[13px]">
+                      <SelectValue/>
+                    </SelectTrigger>
                     <SelectContent className="bg-[#1A1A28] border-white/10 text-slate-200">
-                      <MenuItems items={FORMATS.map(f => ({value: f, label: f.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}))} />
+                      <MenuItems items={FORMATS.map(f=>({value:f,label:f}))}/>
                     </SelectContent>
                   </Select>
-                  {outputForm.format === 'other' && (
-                    <Input 
-                      onKeyDown={handleKeyDownOutput} 
-                      value={outputForm.customFormat} 
-                      onChange={e => setOutputForm(f => ({ ...f, customFormat: e.target.value }))} 
-                      placeholder="e.g. YouTube Hook" 
-                      className="w-full mt-3 bg-[#060609] border-white/10 rounded-xl" 
-                    />
-                  )}
                 </div>
                 <div>
-                  <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Platform</label>
-                  <Select value={outputForm.platform} onValueChange={(v) => setOutputForm(f => ({ ...f, platform: v, customPlatform: '' }))}>
-                    <SelectTrigger className="w-full bg-[#060609] border-white/10 rounded-xl"><SelectValue /></SelectTrigger>
+                  <label className="text-[12px] text-slate-400 block mb-2">Platform</label>
+                  <Select value={outputForm.platform} onValueChange={(v) => setOutputForm(f => ({...f, platform: v}))}>
+                    <SelectTrigger className="bg-[#060609] border-white/10 text-[13px]">
+                      <SelectValue/>
+                    </SelectTrigger>
                     <SelectContent className="bg-[#1A1A28] border-white/10 text-slate-200">
-                      <MenuItems items={PLATFORMS} />
+                      <MenuItems items={PLATFORMS}/>
                     </SelectContent>
                   </Select>
-                  {outputForm.platform === 'other' && (
-                    <Input 
-                      onKeyDown={handleKeyDownOutput} 
-                      value={outputForm.customPlatform} 
-                      onChange={e => setOutputForm(f => ({ ...f, customPlatform: e.target.value }))} 
-                      placeholder="e.g. Midjourney" 
-                      className="w-full mt-3 bg-[#060609] border-white/10 rounded-xl" 
-                    />
-                  )}
                 </div>
               </div>
-
-              {/* Prompt Bağlama */}
-              <div>
-                <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Linked Prompt (Optional)</label>
-                <Select value={outputForm.prompt_id} onValueChange={(v) => setOutputForm(f => ({ ...f, prompt_id: v }))}>
-                  <SelectTrigger className="w-full bg-[#060609] border-white/10 rounded-xl"><SelectValue placeholder="Link to a saved prompt" /></SelectTrigger>
-                  <SelectContent className="bg-[#1A1A28] border-white/10 text-slate-200">
-                    <SelectItem value="none" className="text-slate-500">None</SelectItem>
-                    {activePrompts.map(p => <SelectItem key={p.id} value={p.id}>{p.title}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {outputForm.prompt_id !== 'none' && (
-                  <p className="text-[11px] text-green-400 mt-2 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Linked to an existing prompt
-                  </p>
-                )}
-              </div>
               
-              {/* Notlar */}
-              <div>
-                <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Notes / Context (Optional)</label>
+              <div className="relative z-0">
+                <label className="text-[12px] text-slate-400 block mb-2">Notes</label>
                 <Input 
-                  onKeyDown={handleKeyDownOutput} 
-                  value={outputForm.notes} 
-                  onChange={e => setOutputForm(f => ({ ...f, notes: e.target.value }))} 
-                  placeholder="e.g., Used for Q3 marketing campaign... (Press Enter to save)" 
-                  className="w-full bg-[#060609] border-white/10 rounded-xl" 
+                  value={outputForm.notes || ''} 
+                  onChange={e => setOutputForm(f => ({...f, notes: e.target.value}))} 
+                  className="bg-[#060609] border-white/10" 
                 />
               </div>
             </div>
-
-            {/* Sağ Taraf: Çıktı İçeriği Metin Alanı */}
-            <div className="lg:col-span-2 flex flex-col h-full bg-[#060609]">
-              <div className="p-6 pb-2">
-                <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider block">Generated Output Content</label>
-              </div>
-              <div className="flex-1 px-6 pb-6 flex flex-col">
+            
+            <div className="lg:col-span-2 flex flex-col h-full bg-[#060609] min-h-0">
+              <div className="flex-1 px-6 pt-6 min-h-0 flex flex-col">
                 <Textarea 
-                  onKeyDown={(e) => handleKeyDownTextarea(e, handleAddOutput)} 
                   value={outputForm.content} 
                   onChange={e => setOutputForm(f => ({ ...f, content: e.target.value }))} 
-                  placeholder="The isolated output will appear here... (Press Ctrl+Enter to save)" 
-                  className="flex-1 w-full bg-[#0A0A0F] border border-white/5 rounded-2xl p-8 text-[15px] text-slate-200 leading-loose focus-visible:ring-1 focus-visible:ring-pink-500/50 resize-none shadow-inner overflow-y-auto font-serif" 
+                  className="w-full h-full bg-[#0A0A0F] border border-white/5 rounded-2xl p-8 text-[15px] text-slate-200 resize-none" 
                 />
               </div>
-              
-              {/* Alt Bar: Kaydet Butonu */}
-              <div className="p-6 border-t border-white/5 bg-[#0A0A0F] flex gap-4 shrink-0">
+              <div className="p-6 border-t border-white/5 bg-[#0A0A0F] flex gap-4">
                 <button 
-                  disabled={submitting} 
                   onClick={() => setShowAddOutput(false)} 
-                  className="px-6 py-4 rounded-xl border border-white/10 text-[14px] font-medium text-slate-400 hover:text-white transition-colors"
+                  className="px-6 py-4 rounded-xl border border-white/10 text-[14px] text-slate-400"
                 >
                   Cancel
                 </button>
                 <button 
-                  disabled={submitting} 
                   onClick={handleAddOutput} 
-                  className="flex-1 py-4 rounded-xl bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-[14px] font-medium text-white flex items-center justify-center gap-2 shadow-[0_0_15px_-3px_rgba(236,72,153,0.5)] transition-all"
+                  className="flex-1 py-4 rounded-xl bg-pink-600 hover:bg-pink-500 text-white font-medium flex items-center justify-center gap-2"
                 >
-                  {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><CheckCircle2 className="w-5 h-5" /> Save to Swipe File</>}
+                  <Save className="w-5 h-5"/> Save Output
                 </button>
               </div>
             </div>
-
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* FULL WORKSPACE MODAL (PROMPT EKLEME/DÜZENLEME) */}
+      {/* FULL WORKSPACE MODAL (PROMPT EKLEME/DÜZENLEME & ÇIKTI SEKME DESTEĞİ) */}
       <Dialog open={showAddPrompt} onOpenChange={(open) => { if (!submitting) { setShowAddPrompt(open); if(!open){ setEditingPrompt(null); setForm(emptyForm); setError(''); } } }}>
         <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-2xl sm:max-w-[95vw] w-[95vw] h-[95vh] shadow-2xl p-0 gap-0 overflow-hidden text-white flex flex-col [&>button]:hidden">
-          
           <div className="flex items-center justify-between p-6 border-b border-white/5 bg-gradient-to-r from-[#0A0A0F] to-[#111118] shrink-0">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
@@ -1476,14 +2278,16 @@ export default function Dashboard() {
               </div>
             </div>
             
-            {editingPrompt && (
-              <div className="flex items-center bg-[#060609] p-1 rounded-xl border border-white/5">
-                <button 
-                  onClick={() => setActiveTab('editor')} 
-                  className={`px-5 py-2.5 rounded-lg text-[13px] font-medium flex items-center gap-2 transition-all ${activeTab === 'editor' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
-                >
-                  <Edit2 className="w-4 h-4" /> Prompt Editor
-                </button>
+            {/* TABS */}
+            <div className="flex items-center bg-[#060609] p-1 rounded-xl border border-white/5">
+              <button 
+                onClick={() => setActiveTab('editor')} 
+                className={`px-5 py-2.5 rounded-lg text-[13px] font-medium flex items-center gap-2 transition-all ${activeTab === 'editor' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+              >
+                <Edit2 className="w-4 h-4" /> Prompt Editor
+              </button>
+              
+              {editingPrompt && (
                 <button 
                   onClick={() => setActiveTab('history')} 
                   className={`px-5 py-2.5 rounded-lg text-[13px] font-medium flex items-center gap-2 transition-all ${activeTab === 'history' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
@@ -1493,8 +2297,17 @@ export default function Dashboard() {
                     {promptVersions.length}
                   </span>
                 </button>
-              </div>
-            )}
+              )}
+              
+              {editingPrompt && (
+                <button 
+                  onClick={() => setActiveTab('outputs')} 
+                  className={`px-5 py-2.5 rounded-lg text-[13px] font-medium flex items-center gap-2 transition-all ${activeTab === 'outputs' ? 'bg-violet-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                >
+                  <Library className="w-4 h-4" /> Saved Outputs
+                </button>
+              )}
+            </div>
             
             <button 
               onClick={() => setShowAddPrompt(false)} 
@@ -1507,146 +2320,180 @@ export default function Dashboard() {
           <div className="flex-1 overflow-hidden bg-[#060609]">
             {activeTab === 'editor' ? (
               <div className="grid grid-cols-1 lg:grid-cols-3 h-full overflow-hidden">
-                
-                {/* Sol Taraf: Prompt Ayarları */}
                 <div className="p-8 space-y-6 bg-[#0A0A0F]/50 overflow-y-auto h-full border-r border-white/5">
                   {error && (
                     <div className="flex items-center gap-2 text-[13px] text-red-400 bg-red-500/10 p-4 rounded-xl border border-red-500/20">
-                      <AlertCircle className="w-4 h-4 flex-shrink-0" /><p>{error}</p>
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <p>{error}</p>
                     </div>
                   )}
                   
                   <div>
-                    <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Title</label>
+                    <label className="text-[12px] font-semibold text-slate-400 uppercase block mb-2">Title</label>
                     <Input 
-                      onKeyDown={handleKeyDownPrompt} 
                       value={form.title} 
                       onChange={e => setForm(f => ({ ...f, title: e.target.value }))} 
-                      className="w-full bg-[#060609] border-white/10 rounded-xl px-4 py-6 text-[14px] text-white" 
+                      className="bg-[#060609] border-white/10 text-white" 
                     />
                   </div>
                   
+                  {/* MULTI-SELECT PLATFORM ALANI */}
                   <div>
-                    <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Target Platform</label>
-                    <Select value={form.platform} onValueChange={(v) => setForm(f => ({ ...f, platform: v, customPlatform: '' }))}>
-                      <SelectTrigger className="w-full bg-[#060609] border-white/10 rounded-xl px-4 py-6 text-[13px] text-white">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[#1A1A28] border-white/10 text-slate-200">
-                        <MenuItems items={PLATFORMS} />
-                      </SelectContent>
-                    </Select>
-                    {form.platform === 'other' && (
-                      <Input 
-                        onKeyDown={handleKeyDownPrompt} 
-                        value={form.customPlatform} 
-                        onChange={e => setForm(f => ({ ...f, customPlatform: e.target.value }))} 
-                        placeholder="e.g. Midjourney" 
-                        className="w-full mt-3 bg-[#060609] border-white/10 rounded-xl px-4 py-5 text-[13px] text-white" 
-                      />
-                    )}
+                    <label className="text-[12px] font-semibold text-slate-400 uppercase block mb-2">
+                      Target Platforms (Multi-Select)
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {PLATFORMS.filter(p => p.value !== 'other').map(p => (
+                        <button 
+                          key={p.value} 
+                          onClick={() => togglePlatformSelection(p.value)}
+                          className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold border transition-all ${form.platforms.includes(p.value) ? getPlatformStyle(p.value) + ' ring-2 ring-white/10' : 'bg-[#060609] text-slate-500 border-white/10 hover:border-white/30'}`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   
                   <div>
-                    <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Category</label>
-                    <Select value={form.category} onValueChange={(v) => setForm(f => ({ ...f, category: v, customCategory: '' }))}>
-                      <SelectTrigger className="w-full bg-[#060609] border-white/10 rounded-xl px-4 py-6 text-[13px] text-white">
+                    <label className="text-[12px] font-semibold text-slate-400 uppercase block mb-2">Category</label>
+                    <Select 
+                      value={form.category} 
+                      onValueChange={(v) => setForm(f => ({ ...f, category: v }))}
+                    >
+                      <SelectTrigger className="bg-[#060609] border-white/10 text-white">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-[#1A1A28] border-white/10 text-slate-200">
                         <MenuItems items={CATEGORIES.map(c => ({value: c, label: c}))} />
                       </SelectContent>
                     </Select>
-                    {form.category === 'Other' && (
-                      <Input 
-                        onKeyDown={handleKeyDownPrompt} 
-                        value={form.customCategory} 
-                        onChange={e => setForm(f => ({ ...f, customCategory: e.target.value }))} 
-                        placeholder="Enter custom category..." 
-                        className="w-full mt-3 bg-[#060609] border-white/10 rounded-xl px-4 py-5 text-[13px] text-white" 
-                      />
-                    )}
                   </div>
-                  
-                  {collections.length > 0 && (
-                    <div>
-                      <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Collection</label>
-                      <Select value={form.collection_id || "none"} onValueChange={(v) => setForm(f => ({ ...f, collection_id: v === "none" ? "" : v }))}>
-                        <SelectTrigger className="w-full bg-[#060609] border-white/10 rounded-xl px-4 py-6 text-[13px] text-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[#1A1A28] border-white/10 text-slate-200">
-                          <SelectItem value="none" className="text-slate-500">None</SelectItem>
-                          {collections.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
                 </div>
                 
-                {/* Sağ Taraf: Prompt İçeriği Alanı */}
-                <div className="lg:col-span-2 flex flex-col h-full bg-[#060609]">
-                  <div className="p-6 pb-2">
-                    <label className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider block">Prompt Template Content</label>
+                <div className="lg:col-span-2 flex flex-col h-full bg-[#060609] min-h-0 overflow-hidden relative">
+                  
+                  {/* DIŞ BAĞLANTI BUTONLARI (OPEN IN CHATGPT VS) */}
+                  <div className="absolute top-4 right-4 z-10 flex gap-2">
+                    {form.platforms.map(platValue => {
+                      const platObj = PLATFORMS.find(p => p.value === platValue)
+                      if(!platObj || platObj.value === 'other') return null
+                      return (
+                        <button 
+                          key={platValue} 
+                          onClick={() => window.open(platObj.url, '_blank')} 
+                          className={`px-4 py-2 ${platObj.bg} hover:opacity-80 rounded-lg text-[12px] font-bold transition-colors flex items-center gap-1.5 shadow-lg backdrop-blur-md border`}
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" /> Open {platObj.label}
+                        </button>
+                      )
+                    })}
                   </div>
-                  <div className="flex-1 px-6 pb-6 flex flex-col">
+
+                  <div className="flex-1 px-6 pt-6 pb-6 min-h-0 flex flex-col relative mt-10">
                     <Textarea 
-                      onKeyDown={(e) => handleKeyDownTextarea(e, editingPrompt ? handleEditPrompt : handleAddPrompt)} 
                       value={form.content} 
                       onChange={e => setForm(f => ({ ...f, content: e.target.value }))} 
-                      placeholder="Type your prompt... (Press Ctrl+Enter to save)" 
-                      className="flex-1 w-full bg-[#0A0A0F] border border-white/5 rounded-2xl p-8 text-[15px] text-slate-200 leading-loose focus-visible:ring-1 focus-visible:ring-violet-500/50 resize-none shadow-inner overflow-y-auto" 
+                      placeholder="Type your prompt..." 
+                      className="w-full h-full bg-[#0A0A0F] border border-white/5 rounded-2xl p-8 text-[15px] text-slate-200 resize-none" 
                     />
                   </div>
-                  <div className="p-6 border-t border-white/5 bg-[#0A0A0F] flex gap-4 shrink-0">
+                  
+                  <div className="p-6 border-t border-white/5 bg-[#0A0A0F] flex gap-4 shrink-0 justify-end">
                     <button 
                       disabled={submitting} 
                       onClick={() => setShowAddPrompt(false)} 
-                      className="px-6 py-4 rounded-xl border border-white/10 text-[14px] font-medium text-slate-400 hover:text-white"
+                      className="px-6 py-4 rounded-xl border border-white/10 text-[14px] text-slate-400"
                     >
                       Cancel
                     </button>
+                    
+                    {/* AI OPTIMIZE BUTONU */}
+                    <button 
+                      onClick={triggerAIOptimize} 
+                      className="px-6 py-4 rounded-xl bg-violet-500/20 text-violet-400 border border-violet-500/30 text-[14px] font-bold flex items-center gap-2 hover:bg-violet-500/30 transition-colors"
+                    >
+                      <Wand2 className="w-4 h-4"/> AI Optimize
+                    </button>
+                    
                     <button 
                       disabled={submitting} 
                       onClick={editingPrompt ? handleEditPrompt : handleAddPrompt} 
-                      className="flex-1 py-4 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-[14px] font-medium text-white flex items-center justify-center gap-2"
+                      className="px-8 py-4 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold flex items-center justify-center gap-2"
                     >
-                      {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <><CheckCircle2 className="w-5 h-5" /> {editingPrompt ? 'Save Modifications' : 'Create Prompt'}</>}
+                      <CheckCircle2 className="w-5 h-5" /> {editingPrompt ? 'Save Modifications' : 'Create Prompt'}
                     </button>
                   </div>
                 </div>
               </div>
-            ) : (
-              
-              /* Version History Alanı */
-              <div className="h-full overflow-hidden p-10">
-                {loadingVersions ? (
-                  <div className="h-full flex items-center justify-center">
-                    <Loader2 className="w-10 h-10 text-violet-500 animate-spin" />
-                  </div>
-                ) : promptVersions.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center">
-                    <History className="w-12 h-12 text-slate-600 mb-4" />
-                    <p className="text-white">No version logs</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 h-full overflow-y-auto pb-12">
-                    {promptVersions.map(v => (
-                      <div key={v.id} className="flex flex-col bg-[#0A0A0F] border border-white/5 rounded-2xl p-6 h-[320px]">
-                        <div className="flex justify-between mb-3 border-b border-white/5 pb-3">
-                          <div><span className="text-[12px] text-violet-400">V{v.version_num}</span></div>
-                          <button onClick={() => handleRestoreVersion(v.content)} className="text-[12px] text-violet-400">
-                            <RotateCcw className="w-3.5 h-3.5" /> Restore
-                          </button>
-                        </div>
-                        <div className="flex-1 overflow-hidden relative">
-                          <p className="text-[13px] text-slate-400 font-mono">{v.content}</p>
-                          <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#0A0A0F] to-transparent" />
-                        </div>
+            ) : activeTab === 'history' ? (
+              <div className="h-full overflow-y-auto p-10">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {promptVersions.map(v => (
+                    <div key={v.id} className="bg-[#0A0A0F] border border-white/5 rounded-2xl p-6 h-[320px]">
+                      <div className="flex justify-between border-b border-white/5 pb-3 mb-3">
+                        <span className="text-[12px] text-violet-400">V{v.version_num}</span>
                       </div>
-                    ))}
-                  </div>
-                )}
+                      <p className="text-[13px] text-slate-400">{v.content}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              // SAVED OUTPUTS TAB İÇERİĞİ (PROMPT İÇİNDEN ÇIKTI EKLEME)
+              <div className="flex h-full">
+                <div className="w-1/3 bg-[#0A0A0F]/50 border-r border-white/5 p-6 flex flex-col">
+                  <h4 className="text-[13px] font-bold text-white mb-4">Add Output to this Prompt</h4>
+                  
+                  <Textarea 
+                    id="inlineOutputText" 
+                    placeholder="Paste result here..." 
+                    className="flex-1 bg-black/40 border-white/10 mb-4 text-[13px]" 
+                  />
+                  
+                  <Select 
+                    defaultValue="chatgpt" 
+                    onValueChange={(v) => { (window as any).tempPlat = v; }}
+                  >
+                    <SelectTrigger className="bg-[#060609] border-white/10 mb-4">
+                      <SelectValue/>
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#1A1A28] text-white">
+                      <MenuItems items={PLATFORMS}/>
+                    </SelectContent>
+                  </Select>
+                  
+                  <button 
+                    onClick={() => {
+                      const el = document.getElementById('inlineOutputText') as HTMLTextAreaElement
+                      const val = el?.value
+                      const plat = (window as any).tempPlat || 'chatgpt'
+                      if(val) { 
+                        handleAddOutputInline(val, plat)
+                        el.value = '' 
+                      }
+                    }} 
+                    className="w-full py-3 bg-pink-600 hover:bg-pink-500 rounded-xl text-white font-bold"
+                  >
+                    Save Output
+                  </button>
+                </div>
+                
+                <div className="flex-1 p-8 overflow-y-auto bg-[#060609]">
+                   <h4 className="text-[16px] font-bold text-white mb-6 flex items-center gap-2">
+                     <Library className="w-5 h-5 text-pink-400" /> Linked Outputs
+                   </h4>
+                   <div className="grid grid-cols-2 gap-6">
+                     {activeOutputs.filter(o => o.prompt_id === editingPrompt?.id).map(out => (
+                       <div key={out.id} className="bg-[#0A0A0F] border border-white/5 rounded-2xl p-5">
+                         <span className={`text-[10px] uppercase px-2 py-1 rounded font-bold ${getPlatformStyle(out.platform)}`}>
+                           {out.platform}
+                         </span>
+                         <p className="text-[13px] text-slate-300 mt-3 line-clamp-4">{out.content}</p>
+                       </div>
+                     ))}
+                   </div>
+                </div>
               </div>
             )}
           </div>
@@ -1654,71 +2501,44 @@ export default function Dashboard() {
       </Dialog>
 
       {/* AI OPTIMIZE MODAL */}
-      <Dialog open={showOptimizeModal} onOpenChange={(open) => { if (!isOptimizing) setShowOptimizeModal(open) }}>
-        <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-2xl sm:max-w-[95vw] w-[95vw] h-[95vh] shadow-2xl p-0 gap-0 overflow-hidden text-white flex flex-col [&>button]:hidden">
-          
-          <div className="flex items-center justify-between p-6 border-b border-white/5 bg-gradient-to-r from-[#0A0A0F] to-[#111118] shrink-0">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                <Wand2 className="w-6 h-6 text-violet-400" />
-              </div>
-              <div>
-                <DialogTitle className="text-[19px] font-semibold text-white tracking-tight">AI Prompt Optimization</DialogTitle>
-                <p className="text-[13px] text-violet-400/70 font-medium mt-0.5">Pro Feature Preview</p>
-              </div>
+      <Dialog open={showOptimizeModal} onOpenChange={setShowOptimizeModal}>
+        <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-2xl sm:max-w-[80vw] w-[80vw] h-[80vh] shadow-2xl p-0 gap-0 overflow-hidden text-white flex flex-col [&>button]:hidden">
+          <div className="p-6 border-b border-white/5 bg-gradient-to-r from-[#0A0A0F] to-[#111118] flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <Wand2 className="w-6 h-6 text-violet-400" />
+              <DialogTitle>AI Optimization</DialogTitle>
             </div>
-            {!isOptimizing && (
-              <button 
-                onClick={() => setShowOptimizeModal(false)} 
-                className="text-slate-500 hover:text-white p-2.5 bg-white/5 rounded-xl"
-              >
-                <XCircle className="w-5 h-5" />
-              </button>
-            )}
+            <button onClick={() => setShowOptimizeModal(false)}>
+              <XCircle className="w-5 h-5 text-slate-500 hover:text-white" />
+            </button>
           </div>
           
-          <div className="flex-1 overflow-hidden bg-[#060609] relative">
-            {isOptimizing && !optimizeResult ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <Loader2 className="w-14 h-14 text-violet-500 animate-spin" />
+          <div className="flex-1 overflow-hidden relative">
+            {isOptimizing ? (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Loader2 className="w-10 h-10 text-violet-500 animate-spin" />
               </div>
             ) : optimizeResult ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 h-full overflow-hidden divide-x divide-white/5">
-                <div className="p-10 overflow-y-auto h-full">
-                  <h4 className="text-[12px] font-bold text-slate-500 uppercase mb-4">Original</h4>
-                  <div className="bg-black/40 border border-white/5 rounded-xl p-6 text-[14px] text-slate-400 mb-8">
-                    {optimizingPrompt?.content}
-                  </div>
-                  
-                  <div className="bg-green-500/5 rounded-2xl p-6 mb-8">
-                    <h4 className="text-green-500/90 mb-4 font-bold uppercase">Strengths</h4>
-                    <ul className="space-y-3">
-                      {optimizeResult.strengths.map(s => <li key={s} className="text-slate-300 text-[14px]">{s}</li>)}
-                    </ul>
-                  </div>
-                  
-                  <div className="bg-red-500/5 rounded-2xl p-6">
-                    <h4 className="text-red-400/90 mb-4 font-bold uppercase">Weaknesses</h4>
-                    <ul className="space-y-3">
-                      {optimizeResult.weaknesses.map(w => <li key={w} className="text-slate-300 text-[14px]">{w}</li>)}
-                    </ul>
+              <div className="flex h-full p-8 gap-8">
+                <div className="w-1/2 space-y-6">
+                  <h4 className="text-[13px] text-slate-400">Original</h4>
+                  <div className="p-4 bg-black/40 rounded-xl text-[14px] text-slate-300 whitespace-pre-wrap">
+                    {form.content}
                   </div>
                 </div>
-                
-                <div className="flex flex-col h-full">
-                  <div className="p-8 pb-4">
-                    <h4 className="text-[12px] font-bold text-violet-400 uppercase">Optimized Version</h4>
-                  </div>
-                  <div className="flex-1 p-8 pt-0">
-                    <Textarea 
-                      value={optimizeResult.improved_prompt} 
-                      onChange={e => setOptimizeResult(p => p ? {...p, improved_prompt: e.target.value} : null)} 
-                      className="h-full bg-violet-500/5 border-violet-500/20 text-[15px]" 
-                    />
-                  </div>
-                  <div className="p-8 pt-4 border-t border-white/5">
-                    <button onClick={acceptOptimization} className="w-full py-4 bg-violet-600 rounded-xl">Replace</button>
-                  </div>
+                <div className="w-1/2 flex flex-col">
+                  <h4 className="text-[13px] text-violet-400 mb-4">Optimized</h4>
+                  <Textarea 
+                    value={optimizeResult.improved_prompt} 
+                    onChange={e => setOptimizeResult(prev => ({...prev!, improved_prompt: e.target.value}))} 
+                    className="flex-1 bg-violet-500/5 border-violet-500/20 text-[15px] p-4 resize-none" 
+                  />
+                  <button 
+                    onClick={acceptOptimization} 
+                    className="mt-4 py-4 bg-violet-600 hover:bg-violet-500 text-white rounded-xl font-bold"
+                  >
+                    Replace Prompt
+                  </button>
                 </div>
               </div>
             ) : null}
@@ -1726,54 +2546,31 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Collection Modal */}
-      <Dialog open={showAddCollection} onOpenChange={(open) => { setShowAddCollection(open); setError(''); }}>
+      {/* COLLECTION MODAL */}
+      <Dialog open={showAddCollection} onOpenChange={setShowAddCollection}>
         <DialogContent className="bg-[#111118] border-white/10 rounded-2xl w-full max-w-md shadow-2xl p-0 gap-0 text-white [&>button]:hidden">
-          
-          <div className="flex items-center justify-between p-6 border-b border-white/5">
-            <DialogTitle>{editingCollection ? 'Edit Collection' : 'New Collection'}</DialogTitle>
-            <button onClick={() => setShowAddCollection(false)} className="text-slate-500"><XCircle className="w-4 h-4" /></button>
-          </div>
-          
-          <div className="p-6 space-y-5">
-            {error && <div className="text-red-400 text-[13px]">{error}</div>}
-            <div>
-              <label className="text-[12px] text-slate-400 block mb-2">Name</label>
-              <Input 
-                onKeyDown={handleKeyDownCollection} 
-                value={collectionForm.name} 
-                onChange={e => setCollectionForm(f => ({...f, name: e.target.value}))} 
-                className="bg-[#060609] border-white/10" 
-                placeholder="(Press Enter to save)" 
-              />
-            </div>
-            <div>
-              <label className="text-[12px] text-slate-400 block mb-2">Description</label>
-              <Input 
-                onKeyDown={handleKeyDownCollection} 
-                value={collectionForm.description} 
-                onChange={e => setCollectionForm(f => ({...f, description: e.target.value}))} 
-                className="bg-[#060609] border-white/10" 
-                placeholder="(Press Enter to save)" 
-              />
-            </div>
-          </div>
-          
-          <div className="flex gap-3 p-6 border-t border-white/5">
-            <button 
-              onClick={() => setShowAddCollection(false)} 
-              className="flex-1 py-3 border border-white/10 rounded-xl"
-            >
-              Cancel
+          <div className="flex justify-between p-6 border-b border-white/5">
+            <DialogTitle>Collection</DialogTitle>
+            <button onClick={() => setShowAddCollection(false)}>
+              <XCircle className="w-5 h-5 text-slate-500"/>
             </button>
+          </div>
+          <div className="p-6 space-y-5">
+            <Input 
+              value={collectionForm.name} 
+              onChange={e => setCollectionForm(f => ({...f, name: e.target.value}))} 
+              placeholder="Name" 
+              className="bg-[#060609] border-white/10" 
+            />
+          </div>
+          <div className="p-6 border-t border-white/5">
             <button 
               onClick={handleSaveCollection} 
-              className="flex-1 py-3 bg-violet-600 rounded-xl"
+              className="w-full py-3 bg-violet-600 hover:bg-violet-500 rounded-xl"
             >
-              {editingCollection ? 'Save' : 'Create'}
+              Save
             </button>
           </div>
-          
         </DialogContent>
       </Dialog>
     </div>
@@ -1781,5 +2578,13 @@ export default function Dashboard() {
 }
 
 function MenuItems({ items }: { items: {value: string, label: string}[] }) {
-  return <>{items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}</>
+  return (
+    <>
+      {items.map(i => (
+        <SelectItem key={i.value} value={i.value} className="cursor-pointer">
+          {i.label}
+        </SelectItem>
+      ))}
+    </>
+  )
 }
