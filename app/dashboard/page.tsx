@@ -4,14 +4,14 @@ import React, { useEffect, useState, useMemo, DragEvent } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
 import { 
-  Copy, Plus, MoreVertical, Edit2, Trash2, Folder, LayoutGrid, AlertCircle, 
+  Bell, Copy, Plus, MoreVertical, Edit2, Trash2, Folder, LayoutGrid, AlertCircle, 
   Check, Search, Sparkles, Loader2, Wand2, XCircle, CheckCircle2, History, 
   RotateCcw, Star, Clock, Settings, BookOpen, MessageSquare, Share2, Zap,
   BarChart2, ChevronLeft, ChevronRight, Activity, RefreshCw, PieChart, ShieldAlert,
   ChevronDown, Library, Mail, MessageCircle, Code2, FileText, Lightbulb,
   Workflow, Play, ExternalLink, ArrowRight, GripVertical, CheckCircle, 
   ArrowDown, Save, FastForward, Pin, Layers, Database, MousePointerClick, Edit3,
-  Undo2, FileDown, FolderOpen
+  Undo2, FileDown, FolderOpen, User, CreditCard, LogOut
 } from 'lucide-react'
 
 // ============================================================================
@@ -373,7 +373,7 @@ export default function Dashboard() {
   const [editingCollection, setEditingCollection] = useState<Collection | null>(null)
   
   // Görünüm (View) Yönetimi
-  const [activeView, setActiveView] = useState<'all' | 'favorites' | 'recent' | 'trash' | 'analytics' | 'outputs' | 'platform' | 'collection' | 'workflows' | 'workflow-execution' | 'unified-prompt'>('all')
+  const [activeView, setActiveView] = useState<'dashboard' | 'all' | 'favorites' | 'recent' | 'trash' | 'analytics' | 'outputs' | 'platform' | 'collection' | 'workflows' | 'workflow-execution' | 'unified-prompt'>('dashboard')  
   const [activeCollection, setActiveCollection] = useState<string | null>(null)
   const [activePlatform, setActivePlatform] = useState<string | null>(null)
   
@@ -1563,185 +1563,173 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[#060609] text-slate-200 font-sans selection:bg-violet-500/30 flex overflow-hidden">
       
       {/* ============================================================================ */}
-      {/* 6. SIDEBAR                                                                   */}
+      {/* 6. SIDEBAR                                                                     */}
       {/* ============================================================================ */}
       <aside className={`h-screen bg-[#0A0A0F]/95 backdrop-blur-xl border-r border-white/5 flex flex-col z-20 shrink-0 transition-all duration-300 ease-in-out ${isCollapsed ? 'w-[80px]' : 'w-72'}`}>
-        <div className={`p-6 border-b border-white/5 shrink-0 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+        
+        {/* 1. LOGO & COLLAPSE BUTTON */}
+        <div className={`p-5 border-b border-white/5 shrink-0 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} relative`}>
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center shadow-[0_0_20px_-5px_rgba(139,92,246,0.5)] shrink-0">
               <LayoutGrid className="w-4 h-4 text-white" />
             </div>
             {!isCollapsed && (
-              <span className="font-semibold text-[18px] tracking-tight text-white transition-opacity duration-300">
+              <span className="font-bold text-[18px] tracking-tight text-white">
                 Prompax
               </span>
             )}
           </div>
           <button 
             onClick={() => setIsCollapsed(!isCollapsed)} 
-            className={`p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all ${isCollapsed ? 'absolute -right-3 top-7 border border-white/10 bg-[#0A0A0F] shadow-lg z-50' : ''}`}
+            className={`p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all ${isCollapsed ? 'absolute -right-3 top-6 border border-white/10 bg-[#0A0A0F] shadow-lg z-50' : ''}`}
           >
             {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
         </div>
 
-        <div className={`flex-1 overflow-y-auto p-4 space-y-8 ${scrollbarClasses}`}>
+        {/* 2. ACTIVE WORKSPACE */}
+        {!isCollapsed && (
+          <div className="p-4 border-b border-white/5 shrink-0">
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 px-1">
+              Active Workspace
+            </p>
+            <DropdownMenu>
+              <DropdownMenuTrigger className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 transition-colors p-2 rounded-xl border border-white/10 outline-none">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <div className="w-6 h-6 rounded bg-violet-600/20 text-violet-400 flex items-center justify-center font-bold text-xs shrink-0">
+                    {user?.user_metadata?.full_name ? user.user_metadata.full_name.charAt(0).toUpperCase() : 'T'}
+                  </div>
+                  <span className="text-sm font-medium text-slate-200 truncate">
+                    {user?.user_metadata?.full_name ? `${user.user_metadata.full_name.split(' ')[0]}'s Workspace` : 'Tolga\'s Workspace'}
+                  </span>
+                </div>
+                <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56 bg-[#0A0A0F] border-white/10 text-slate-300 ml-4">
+                <DropdownMenuItem className="hover:bg-white/5 focus:bg-white/5 cursor-pointer text-violet-400">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create New Workspace
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
           
-          {/* WORKSPACE */}
+        {/* 3. MENU ITEMS */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 pr-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-white/20">
+          
           <div className="space-y-1">
-            {!isCollapsed && (
-              <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('workspace')}>
-                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
-                  Workspace
-                </h3>
-                <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.workspace ? '' : '-rotate-90'}`} />
-              </div>
-            )}
-            
-            {(expandedSections.workspace || isCollapsed) && (
-              <>
-                <button 
-                  onClick={() => setNav('all')} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'all' ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                >
-                  <LayoutGrid className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && (
-                    <>
-                      All Prompts 
-                      <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">
-                        {activePrompts.length}
-                      </span>
-                    </>
-                  )}
-                </button>
-                
-                <button 
-                  onClick={() => setNav('outputs')} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'outputs' ? 'bg-pink-500/10 text-pink-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                >
-                  <Library className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && (
-                    <>
-                      Saved Outputs 
-                      <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">
-                        {activeOutputs.length}
-                      </span>
-                    </>
-                  )}
-                </button>
-                
-                <button 
-                  onClick={() => setNav('favorites')} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'favorites' ? 'bg-amber-500/10 text-amber-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                >
-                  <Star className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && (
-                    <>
-                      Favorites 
-                      <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">
-                        {totalFavorites}
-                      </span>
-                    </>
-                  )}
-                </button>
-                
-                <button 
-                  onClick={() => setNav('recent')} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'recent' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                >
-                  <Clock className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && <span>Recently Used</span>}
-                </button>
-                
-                <button 
-                  onClick={() => setNav('trash')} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'trash' ? 'bg-red-500/10 text-red-400' : 'text-slate-400 hover:text-red-400 hover:bg-white/5'}`}
-                >
-                  <Trash2 className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && (
-                    <>
-                      Trash 
-                      {trashedItems.length > 0 && (
-                        <span className="ml-auto text-[11px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md font-medium">
-                          {trashedItems.length}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </button>
-              </>
-            )}
+            {/* Dashboard */}
+            <button onClick={() => setNav('dashboard')} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'dashboard' ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
+              <LayoutGrid className="w-4 h-4 shrink-0" />
+              {!isCollapsed && <span>Dashboard</span>}
+            </button>
+
+            {/* All Prompts */}
+            <button onClick={() => setNav('all')} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'all' ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
+              <BookOpen className="w-4 h-4 shrink-0" />
+              {!isCollapsed && (
+                <>
+                  All Prompts
+                  <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">{activePrompts.length}</span>
+                </>
+              )}
+            </button>
+
+            {/* Workflows */}
+            <button onClick={() => setNav('workflows')} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'workflows' ? 'bg-indigo-500/10 text-indigo-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
+              <Workflow className="w-4 h-4 shrink-0" />
+              {!isCollapsed && <span>Workflows</span>}
+            </button>
+
+            {/* Saved Outputs */}
+            <button onClick={() => setNav('outputs')} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'outputs' ? 'bg-pink-500/10 text-pink-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
+              <Library className="w-4 h-4 shrink-0" />
+              {!isCollapsed && (
+                <>
+                  Saved Outputs
+                  <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">{activeOutputs.length}</span>
+                </>
+              )}
+            </button>
+
+            {/* Recently Used */}
+            <button onClick={() => setNav('recent')} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'recent' ? 'bg-blue-500/10 text-blue-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
+              <Clock className="w-4 h-4 shrink-0" />
+              {!isCollapsed && <span>Recently Used</span>}
+            </button>
+
+            {/* Favorites */}
+            <button onClick={() => setNav('favorites')} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'favorites' ? 'bg-amber-500/10 text-amber-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
+              <Star className="w-4 h-4 shrink-0" />
+              {!isCollapsed && (
+                <>
+                  Favorites
+                  <span className="ml-auto text-[11px] bg-white/5 px-2 py-0.5 rounded-md font-medium text-slate-300">{totalFavorites}</span>
+                </>
+              )}
+            </button>
+
+            {/* AI Optimize */}
+            <button onClick={() => setNav('ai-optimize' as any)} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === ('ai-optimize' as any) ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-violet-400 hover:bg-white/5'}`}>
+              <Wand2 className="w-4 h-4 shrink-0" />
+              {!isCollapsed && <span>AI Optimize</span>}
+            </button>
+
+            {/* Trash */}
+            <button onClick={() => setNav('trash')} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'trash' ? 'bg-red-500/10 text-red-400' : 'text-slate-400 hover:text-red-400 hover:bg-white/5'}`}>
+              <Trash2 className="w-4 h-4 shrink-0" />
+              {!isCollapsed && (
+                <>
+                  Trash
+                  {trashedItems.length > 0 && <span className="ml-auto text-[11px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md font-medium">{trashedItems.length}</span>}
+                </>
+              )}
+            </button>
           </div>
 
-          {/* WORKFLOWS */}
+          {/* 4. COLLECTIONS */}
           <div className="space-y-1">
             {!isCollapsed && (
-              <div className="flex items-center justify-between px-4 mb-3">
-                <div className="flex items-center gap-2 cursor-pointer group flex-1" onClick={() => toggleSection('workflows')}>
+              <div className="flex items-center justify-between px-2 mb-3">
+                <div className="flex items-center gap-2 cursor-pointer group flex-1" onClick={() => toggleSection('collections')}>
                   <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
-                    Workflows
+                    Collections
                   </h3>
-                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.workflows ? '' : '-rotate-90'}`} />
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.collections ? '' : '-rotate-90'}`} />
                 </div>
-                <button 
-                  onClick={() => { 
-                    setWorkflowForm({...initialWorkflowsData[0], id: `wf-${Date.now()}`, title: 'New Workflow'}); 
-                    setShowWorkflowBuilder(true); 
-                  }} 
-                  className="text-slate-400 hover:text-indigo-400 transition-colors outline-none"
-                >
+                <button onClick={() => { setShowAddCollection(true); setError(''); setEditingCollection(null); setCollectionForm({name: '', description: ''}) }} className="text-slate-400 hover:text-violet-400 transition-colors outline-none">
                   <Plus className="w-4 h-4" />
                 </button>
               </div>
             )}
             
-            {isCollapsed && (
-              <button 
-                onClick={() => { 
-                  setWorkflowForm({...initialWorkflowsData[0], id: `wf-${Date.now()}`, title: 'New Workflow'}); 
-                  setShowWorkflowBuilder(true); 
-                }} 
-                title="Add Workflow" 
-                className="w-full flex justify-center py-2 text-slate-400 hover:text-indigo-400"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            )}
-            
-            {(expandedSections.workflows || isCollapsed) && workflows.map(wf => (
-              <div key={wf.id} className="relative group/wf flex items-center">
-                <button 
-                  onClick={() => setNav('workflows')} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4 pr-10'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'workflows' || activeWorkflow?.id === wf.id ? 'bg-indigo-500/10 text-indigo-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                >
-                  <Workflow className="w-4 h-4 shrink-0" />
+            {(expandedSections.collections || isCollapsed) && collections.map(col => (
+              <div key={col.id} className="relative group/col flex items-center">
+                <button onClick={() => setNav('collection', col.id)} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3 pr-8'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeCollection === col.id ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
+                  <Folder className="w-4 h-4 shrink-0" />
                   {!isCollapsed && (
                     <>
-                      <span className="truncate">{wf.title}</span>
-                      <span className="ml-auto text-[11px] text-slate-500">{wf.steps.length}</span>
+                      <span className="truncate">{col.name}</span>
+                      <span className="ml-auto text-[11px] text-slate-500">{activePrompts.filter(p => p.collection_id === col.id).length}</span>
                     </>
                   )}
                 </button>
                 
+                {/* ÜÇ NOKTA MENÜSÜ (EDİT & DELETE) */}
                 {!isCollapsed && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button className="absolute right-2 p-1.5 rounded-md text-slate-500 opacity-0 group-hover/wf:opacity-100 hover:bg-white/10 hover:text-slate-200 transition-all outline-none">
+                      <button className="absolute right-2 p-1.5 rounded-md text-slate-500 opacity-0 group-hover/col:opacity-100 hover:bg-white/10 hover:text-slate-200 transition-all outline-none">
                         <MoreVertical className="w-3.5 h-3.5" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-36 bg-[#1A1A28] border-white/10 text-slate-200 rounded-xl shadow-2xl p-1">
-                      <DropdownMenuItem 
-                        onClick={() => { setWorkflowForm(wf); setShowWorkflowBuilder(true); }} 
-                        className="gap-2.5 cursor-pointer hover:bg-white/10 py-2 text-[12px] font-medium"
-                      >
-                        <Edit2 className="w-3.5 h-3.5 text-slate-400" /> Edit
+                      <DropdownMenuItem onClick={() => { setEditingCollection(col); setCollectionForm({name: col.name, description: col.description}); setShowAddCollection(true); }} className="gap-2.5 cursor-pointer hover:bg-white/10 py-2 text-[12px] font-medium">
+                        <Edit2 className="w-3.5 h-3.5 text-slate-400" /> Rename
                       </DropdownMenuItem>
                       <DropdownMenuSeparator className="bg-white/5 my-1" />
-                      <DropdownMenuItem 
-                        onClick={() => { if(window.confirm("Delete Workflow?")) setWorkflows(prev => prev.filter(w=>w.id!==wf.id)) }} 
-                        className="gap-2.5 cursor-pointer text-red-400 focus:text-red-400 hover:bg-red-500/10 py-2 text-[12px] font-medium"
-                      >
+                      <DropdownMenuItem onClick={() => { if(window.confirm("Delete this collection?")) setCollections(prev => prev.filter(c=>c.id!==col.id)) }} className="gap-2.5 cursor-pointer text-red-400 focus:text-red-400 hover:bg-red-500/10 py-2 text-[12px] font-medium">
                         <Trash2 className="w-3.5 h-3.5" /> Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -1751,76 +1739,10 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* COLLECTIONS */}
+          {/* 5. PLATFORMS */}
           <div className="space-y-1">
             {!isCollapsed && (
-              <div className="flex items-center justify-between px-4 mb-3">
-                <div className="flex items-center gap-2 cursor-pointer group flex-1" onClick={() => toggleSection('collections')}>
-                  <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
-                    Collections
-                  </h3>
-                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.collections ? '' : '-rotate-90'}`} />
-                </div>
-                <button 
-                  onClick={() => { 
-                    setShowAddCollection(true); 
-                    setError(''); 
-                    setEditingCollection(null); 
-                    setCollectionForm({name: '', description: ''}) 
-                  }} 
-                  className="text-slate-400 hover:text-violet-400 transition-colors outline-none"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-            
-            {(expandedSections.collections || isCollapsed) && collections.map(col => (
-              <div key={col.id} className="relative group/col flex items-center">
-                <button 
-                  onClick={() => setNav('collection', col.id)} 
-                  className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4 pr-10'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeCollection === col.id ? 'bg-violet-500/10 text-violet-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                >
-                  <Folder className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && (
-                    <>
-                      <span className="truncate">{col.name}</span>
-                      <span className="ml-auto text-[11px] text-slate-500">
-                        {activePrompts.filter(p => p.collection_id === col.id).length}
-                      </span>
-                    </>
-                  )}
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {/* INSIGHTS */}
-          <div className="space-y-1">
-            {!isCollapsed && (
-              <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('insights')}>
-                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
-                  Insights
-                </h3>
-                <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.insights ? '' : '-rotate-90'}`} />
-              </div>
-            )}
-            
-            {(expandedSections.insights || isCollapsed) && (
-              <button 
-                onClick={() => setNav('analytics')} 
-                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activeView === 'analytics' ? 'bg-green-500/10 text-green-400' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-              >
-                <BarChart2 className="w-4 h-4 shrink-0" />
-                {!isCollapsed && <span>Analytics & Usage</span>}
-              </button>
-            )}
-          </div>
-
-          {/* PLATFORMS */}
-          <div className="space-y-1">
-            {!isCollapsed && (
-              <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('platforms')}>
+              <div className="flex items-center justify-between px-2 mb-3 cursor-pointer group" onClick={() => toggleSection('platforms')}>
                 <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
                   Platforms
                 </h3>
@@ -1829,71 +1751,33 @@ export default function Dashboard() {
             )}
             
             {(expandedSections.platforms || isCollapsed) && PLATFORMS.filter(p => p.value !== 'other').map(plat => (
-              <button 
-                key={plat.value} 
-                onClick={() => setNav('platform', null, plat.value)} 
-                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activePlatform === plat.value ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-              >
+              <button key={plat.value} onClick={() => setNav('platform', null, plat.value)} className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-xl text-[13px] font-medium transition-all ${activePlatform === plat.value ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}>
                 <div className={`w-2 h-2 rounded-full shrink-0 ${getPlatformDotColor(plat.value)}`} />
                 {!isCollapsed && <span>{plat.label}</span>}
               </button>
             ))}
           </div>
-
-          {/* RESOURCES */}
-          <div className="space-y-1">
-            {!isCollapsed && (
-              <div className="flex items-center justify-between px-4 mb-3 cursor-pointer group" onClick={() => toggleSection('resources')}>
-                <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">
-                  Resources
-                </h3>
-                <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.resources ? '' : '-rotate-90'}`} />
-              </div>
-            )}
-            
-            {(expandedSections.resources || isCollapsed) && (
-              <>
-                <button className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}>
-                  <BookOpen className="w-4 h-4 shrink-0" /> 
-                  {!isCollapsed && <span>Prompt Guide</span>}
-                </button>
-                <button className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}>
-                  <MessageSquare className="w-4 h-4 shrink-0" /> 
-                  {!isCollapsed && <span>Submit Feedback</span>}
-                </button>
-                <button className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all`}>
-                  <Settings className="w-4 h-4 shrink-0" /> 
-                  {!isCollapsed && <span>Settings & API</span>}
-                </button>
-              </>
-            )}
-          </div>
         </div>
 
         {/* BOTTOM USER PROFILE */}
-        <div className="p-4 border-t border-white/5 bg-[#060609]/50 shrink-0 space-y-3">
+        {/* BOTTOM USER PROFILE */}
+        <div className="p-4 border-t border-white/5 bg-[#060609]/50 shrink-0 space-y-2">
+
+        {/* Upgrade butonu */}
           <button className={`w-full flex items-center justify-center ${isCollapsed ? 'p-3' : 'gap-2 py-3'} bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[13px] font-semibold rounded-xl transition-all`}>
-            <Zap className="w-4 h-4 fill-current shrink-0" /> 
+            <Zap className="w-4 h-4 fill-current shrink-0" />
             {!isCollapsed && <span>Upgrade to Pro</span>}
           </button>
-          
-          <div className={`flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2 rounded-xl hover:bg-white/5 transition-colors cursor-pointer`}>
-            {user?.user_metadata?.avatar_url ? (
-              <img src={user.user_metadata.avatar_url} className="w-8 h-8 rounded-full shrink-0" alt="Avatar" />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-300 text-[12px] font-semibold shrink-0">
-                {user?.email?.[0]?.toUpperCase()}
-              </div>
-            )}
+            </div>
             
-            {!isCollapsed && (
-              <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-medium text-slate-200 truncate">{user?.user_metadata?.full_name || user?.email}</p>
-                <p className="text-[11px] font-medium text-slate-500">Free Plan</p>
-              </div>
-            )}
-          </div>
-        </div>
+          {/* Settings butonu */}
+          {!isCollapsed && (
+            <button className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all">
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>Settings</span>
+              <ChevronRight className="w-4 h-4 ml-auto" />
+            </button>
+          )}
       </aside>
 
       {/* ============================================================================ */}
@@ -1902,77 +1786,189 @@ export default function Dashboard() {
       <main className="flex-1 flex flex-col relative h-screen overflow-hidden">
         
         {/* HEADER */}
-        <header className="sticky top-0 z-10 bg-[#060609]/80 backdrop-blur-xl border-b border-white/5 px-10 py-6 flex items-center justify-between shrink-0">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-[22px] font-bold text-white tracking-tight flex items-center gap-2">
-                {activeView === 'workflow-execution' ? 'Workflow Execution Engine' : 
-                 activeView === 'unified-prompt' ? 'Unified Master Prompt Generator' :
-                 searchResults !== null ? 'Search Results' : 
-                 activeView === 'workflows' ? 'Automated Workflows' : 
-                 activeView === 'outputs' ? 'Saved Outputs' : 
-                 activeView === 'trash' ? 'Trash' : 
-                 activeView === 'analytics' ? 'Analytics & Usage' : 
-                 activeView === 'collection' ? collections.find(c => c.id === activeCollection)?.name : 'All Prompts'}
-              </h1>
-            </div>
-          </div>
+        <header className="sticky top-0 z-10 bg-[#060609]/80 backdrop-blur-xl border-b border-white/5 px-10 py-4 flex items-center justify-between shrink-0 gap-6">
           
-          <div className="flex gap-3">
+          {/* BAŞLIK */}
+          {activeView !== 'dashboard' && (
+          <h1 className="text-[20px] font-bold text-white tracking-tight shrink-0">
+            {activeView === 'workflow-execution' ? 'Workflow Execution Engine' :
+             activeView === 'unified-prompt' ? 'Unified Master Prompt Generator' :
+             searchResults !== null ? 'Search Results' :
+             activeView === 'workflows' ? 'Automated Workflows' :
+             activeView === 'outputs' ? 'Saved Outputs' :
+             activeView === 'trash' ? 'Trash' :
+             activeView === 'collection' ? collections.find(c => c.id === activeCollection)?.name : 'All Prompts'}
+          </h1>
+          )}
+
+          {/* ARAMA */}
+          {(activeView !== 'analytics' && activeView !== 'workflow-execution' && activeView !== 'unified-prompt') && (
+            <div className="flex-1 max-w-xl relative group">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-violet-400 transition-colors z-10" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search prompts, workflows, outputs..."
+                className="w-full bg-[#0A0A0F]/90 border border-white/10 rounded-xl pl-11 pr-4 py-2.5 text-[14px] text-white placeholder-slate-500 focus-visible:ring-1 focus-visible:ring-violet-500/50 hover:border-white/20 transition-all"
+              />
+              {isSearching && (
+                <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                  <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SAĞ: Çan + Profil */}
+          <div className="flex items-center gap-3 shrink-0">
+            
+            {/* === DİNAMİK AKSİYON BUTONLARI === */}
+            {activeView === 'all' && (
+              <button onClick={() => setShowAddPrompt(true)} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(139,92,246,0.4)]">
+                <Plus className="w-4 h-4" /> New Prompt
+              </button>
+            )}
+
             {activeView === 'workflows' && (
-              <button 
-                onClick={() => { 
-                  setWorkflowForm({...initialWorkflowsData[0], id: `wf-${Date.now()}`, title: 'New Workflow'}) 
-                  setShowWorkflowBuilder(true) 
-                }} 
-                className="flex items-center gap-2 text-white text-[13px] font-medium px-5 py-2.5 rounded-xl transition-all shadow-[0_0_20px_-5px_rgba(99,102,241,0.4)] bg-indigo-600 hover:bg-indigo-500"
-              >
+              <button onClick={() => { 
+                setWorkflowForm({ 
+                  id: `wf-${Date.now()}`, 
+                  title: 'New Workflow', 
+                  description: '', 
+                  steps: [],
+                  created_at: new Date().toISOString()
+                }); 
+                setShowWorkflowBuilder(true); 
+              }} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(99,102,241,0.4)]">
                 <Plus className="w-4 h-4" /> Create Workflow
               </button>
             )}
-            
-            {(activeView !== 'trash' && activeView !== 'analytics' && activeView !== 'workflows' && activeView !== 'workflow-execution' && activeView !== 'unified-prompt') && (
-              <button 
-                onClick={() => { 
-                  if(activeView === 'outputs') { 
-                    setShowAddOutput(true)
-                    setOutputForm(emptyOutputForm) 
-                  } else { 
-                    setShowAddPrompt(true)
-                    setEditingPrompt(null)
-                    setForm(emptyForm) 
-                  } 
-                }} 
-                className={`flex items-center gap-2 text-white text-[13px] font-medium px-5 py-2.5 rounded-xl transition-all ${activeView === 'outputs' ? 'bg-pink-600 hover:bg-pink-500 shadow-[0_0_20px_-5px_rgba(236,72,153,0.4)]' : 'bg-violet-600 hover:bg-violet-500 shadow-[0_0_20px_-5px_rgba(139,92,246,0.4)]'}`}
-              >
-                <Plus className="w-4 h-4" /> 
-                {activeView === 'outputs' ? 'Smart Magic Paste' : 'New Prompt'}
+
+            {activeView === 'outputs' && (
+              <button onClick={() => setShowAddOutput(true)} className="flex items-center gap-2 bg-pink-600 hover:bg-pink-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(236,72,153,0.4)]">
+                <Plus className="w-4 h-4" /> Save Output
               </button>
             )}
+
+            {/* BİLDİRİMLER (ÇAN) */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="relative w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all border border-white/5 outline-none">
+                <Bell className="w-5 h-5" />
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-violet-500 rounded-full text-[10px] font-black text-white flex items-center justify-center">2</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80 bg-[#0A0A0F] border-white/10 p-0 rounded-2xl shadow-2xl">
+                <div className="p-4 border-b border-white/5 flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-slate-200">Notifications</h3>
+                  <span className="text-[10px] text-violet-400 cursor-pointer hover:underline">Mark all as read</span>
+                </div>
+                <div className="p-2 flex flex-col">
+                   <div className="flex gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer transition-colors">
+                     <div className="mt-0.5"><Sparkles size={16} className="text-violet-400"/></div>
+                     <div>
+                       <p className="text-sm font-medium text-slate-200">Workflow Completed</p>
+                       <p className="text-xs text-slate-500 mt-1">Your 'SaaS Launch' workflow has successfully generated 4 outputs.</p>
+                       <p className="text-[10px] text-slate-600 mt-2">10 mins ago</p>
+                     </div>
+                   </div>
+                   <div className="flex gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer transition-colors">
+                     <div className="mt-0.5"><Wand2 size={16} className="text-blue-400"/></div>
+                     <div>
+                       <p className="text-sm font-medium text-slate-200">AI Optimization Ready</p>
+                       <p className="text-xs text-slate-500 mt-1">We found a way to make your 'Cold Email' prompt 20% more effective.</p>
+                       <p className="text-[10px] text-slate-600 mt-2">2 hours ago</p>
+                     </div>
+                   </div>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* KULLANICI PROFİLİ */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5 transition-colors cursor-pointer border border-white/5 outline-none">
+                {user?.user_metadata?.avatar_url ? (
+                  <img src={user.user_metadata.avatar_url} className="w-8 h-8 rounded-full shrink-0" alt="Avatar" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-300 text-[12px] font-semibold shrink-0">
+                    {user?.email?.[0]?.toUpperCase()}
+                  </div>
+                )}
+                <div className="hidden md:block text-left">
+                  <p className="text-[13px] font-medium text-slate-200">{user?.user_metadata?.full_name || 'Tolga Öztürk'}</p>
+                  <p className="text-[11px] text-slate-500">Free Plan</p>
+                </div>
+                <ChevronDown className="w-4 h-4 text-slate-500" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 bg-[#0A0A0F] border-white/10 rounded-xl shadow-2xl p-1">
+                <div className="px-3 py-3 border-b border-white/5 mb-1">
+                  <p className="text-sm font-medium text-slate-200">{user?.user_metadata?.full_name || 'Tolga Öztürk'}</p>
+                  <p className="text-xs text-slate-500 truncate">{user?.email || 'tolga@prompax.com'}</p>
+                  <button className="mt-3 w-full py-1.5 rounded-lg text-[11px] font-bold bg-violet-500 hover:bg-violet-400 text-white transition-colors">
+                    Upgrade to PRO
+                  </button>
+                </div>
+                <DropdownMenuItem className="gap-2.5 text-slate-300 hover:bg-white/5 cursor-pointer py-2 text-sm rounded-lg">
+                  <User size={16} className="text-slate-400" /> My Profile
+                </DropdownMenuItem>
+                <DropdownMenuItem className="gap-2.5 text-slate-300 hover:bg-white/5 cursor-pointer py-2 text-sm rounded-lg">
+                  <CreditCard size={16} className="text-slate-400" /> Billing & Plan
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-white/5 my-1" />
+                <DropdownMenuItem onClick={async () => { if(typeof supabase !== 'undefined') { await supabase.auth.signOut(); window.location.href = '/login'; } }} className="gap-2.5 text-red-400 hover:bg-red-500/10 focus:bg-red-500/10 cursor-pointer py-2 text-sm rounded-lg">
+                  <LogOut size={16} /> Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            
           </div>
         </header>
 
-        {/* SEARCH BAR (TÜM LİSTE GÖRÜNÜMLERİ İÇİN YENİDEN TASARLANDI) */}
-        {(activeView !== 'analytics' && activeView !== 'workflow-execution' && activeView !== 'unified-prompt') && (
-          <div className="px-10 pt-8 pb-2 shrink-0">
-            <div className="relative max-w-2xl group mx-auto md:mx-0">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-xl bg-violet-500/10 text-violet-400 group-focus-within:bg-violet-500/20 group-focus-within:text-violet-300 transition-colors z-10">
-                <Search className="w-5 h-5" />
-              </div>
-              <Input 
-                value={searchQuery} 
-                onChange={(e) => setSearchQuery(e.target.value)} 
-                placeholder={`Search in ${activeView === 'outputs' ? 'Saved Outputs' : activeView === 'trash' ? 'Trash' : activeView === 'workflows' ? 'Workflows' : 'Prompts'}...`} 
-                className="w-full bg-[#0A0A0F]/90 backdrop-blur-md border border-white/10 rounded-2xl pl-16 pr-12 py-8 text-[15px] text-white placeholder-slate-500 shadow-xl focus-visible:ring-2 focus-visible:ring-violet-500/50 hover:border-white/20 transition-all" 
-              />
-              {isSearching && (
-                 <div className="absolute right-6 top-1/2 -translate-y-1/2">
-                   <Loader2 className="w-5 h-5 text-violet-400 animate-spin" />
-                 </div>
+        {activeView === ('ai-optimize' as any) ? (
+            <div className="relative z-10 w-full max-w-5xl mx-auto pb-10">
+              <h2 className="text-[20px] font-bold text-white mb-8 flex items-center gap-3">
+                <Wand2 className="w-6 h-6 text-violet-400"/> AI Optimized Prompts
+              </h2>
+              {activePrompts.length === 0 ? (
+                <div className="text-center py-20 bg-[#0A0A0F]/50 border border-white/5 rounded-3xl">
+                  <Wand2 className="w-12 h-12 text-slate-600 mx-auto mb-4"/>
+                  <p className="text-slate-400 font-medium text-[16px]">No prompts yet.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {activePrompts.map((prompt) => (
+                    <div key={prompt.id} onClick={() => openWorkspace(prompt)} className="group cursor-pointer flex flex-col bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 h-[300px] hover:border-violet-500/40 transition-all shadow-xl relative">
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-[16px] font-bold truncate text-slate-100 group-hover:text-violet-300 transition-colors">{prompt.title}</h3>
+                          {prompt.description && <p className="text-[12px] text-slate-500 truncate mt-1">{prompt.description}</p>}
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); openWorkspace(prompt); triggerAIOptimize(); }} className="px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 rounded-lg text-[11px] font-bold border border-violet-500/20 flex items-center gap-1.5 shrink-0 transition-all">
+                          <Wand2 className="w-3.5 h-3.5"/> Optimize
+                        </button>
+                      </div>
+                      <div className="relative flex-1 overflow-hidden mb-4">
+                        <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-slate-400 font-serif">{prompt.content}</p>
+                        <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#0A0A0F] to-transparent pointer-events-none"/>
+                      </div>
+                      <div className="flex items-center gap-3 mt-auto pt-4 border-t border-white/5">
+                        <div className="flex -space-x-2">
+                          {prompt.platforms.slice(0,3).map((p) => (
+                            <span key={p} className={`w-7 h-7 rounded-full border-2 border-[#0A0A0F] flex items-center justify-center text-[9px] font-bold uppercase ${getPlatformStyle(p)}`}>
+                              {p.substring(0,1)}
+                            </span>
+                          ))}
+                        </div>
+                        <span className="text-[11px] bg-white/10 border border-white/5 px-3 py-1.5 rounded-lg text-slate-300 font-semibold">{prompt.category}</span>
+                        <button onClick={(e) => copyToClipboard(prompt.content, prompt.id, e)} className="ml-auto flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 hover:bg-violet-500/20 hover:text-violet-300 text-slate-400 transition-all border border-transparent hover:border-violet-500/30 shrink-0">
+                          {copiedId === prompt.id ? <Check className="w-5 h-5 text-green-400"/> : <Copy className="w-5 h-5"/>}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-          </div>
-        )}
+
+          ) :
 
         <div className={`flex-1 p-10 pt-6 overflow-y-auto relative ${scrollbarClasses}`}>
           
@@ -1981,7 +1977,232 @@ export default function Dashboard() {
           {/* ============================================================================ */}
           {/* VIEW: 1. UNIFIED PROMPT GENERATOR                                            */}
           {/* ============================================================================ */}
-          {activeView === 'unified-prompt' ? (
+          {activeView === 'dashboard' ? (
+            <div className="relative z-10 w-full max-w-[1400px] mx-auto space-y-8 pb-10">
+
+              {/* HEADER */}
+              <div>
+                <h1 className="text-[32px] font-black text-white tracking-tight">
+                  Today's Workspace 👋
+                </h1>
+                <p className="text-slate-400 mt-2 text-[15px]">
+                  Good morning, {user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! Continue where you left off.
+                </p>
+              </div>
+
+              {/* STAT CARDS */}
+              <div className="grid grid-cols-4 gap-5">
+                <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
+                  <div className="w-14 h-14 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                    <Workflow className="w-6 h-6 text-violet-400"/>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 text-[13px] font-medium">Workflows in Progress</p>
+                    <h3 className="text-3xl font-black text-white">{workflows.length}</h3>
+                    <p className="text-[12px] text-violet-400 mt-0.5">Active</p>
+                  </div>
+                </div>
+                <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
+                  <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                    <RefreshCw className="w-6 h-6 text-blue-400"/>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 text-[13px] font-medium">Prompts Reused</p>
+                    <h3 className="text-3xl font-black text-white">{activePrompts.reduce((a,p) => a + p.use_count, 0)}</h3>
+                    <p className="text-[12px] text-blue-400 mt-0.5">This week</p>
+                  </div>
+                </div>
+                <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
+                  <div className="w-14 h-14 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center shrink-0">
+                    <LayoutGrid className="w-6 h-6 text-green-400"/>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 text-[13px] font-medium">Prompts Generated</p>
+                    <h3 className="text-3xl font-black text-white">{totalPrompts}</h3>
+                    <p className="text-[12px] text-green-400 mt-0.5">This week</p>
+                  </div>
+                </div>
+                <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
+                  <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                    <Library className="w-6 h-6 text-amber-400"/>
+                  </div>
+                  <div>
+                    <p className="text-slate-400 text-[13px] font-medium">Outputs Generated</p>
+                    <h3 className="text-3xl font-black text-white">{activeOutputs.length}</h3>
+                    <p className="text-[12px] text-amber-400 mt-0.5">This week</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* ANA İÇERİK */}
+              <div className="grid grid-cols-3 gap-6">
+
+                {/* SOL KOLON */}
+                <div className="col-span-2 space-y-6">
+
+                  {/* ACTIVE WORKFLOWS */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-8">
+                    <div className="flex items-center justify-between mb-6">
+                      <h2 className="text-[16px] font-bold text-white flex items-center gap-2">
+                        <Activity className="w-5 h-5 text-indigo-400"/> Active Workflows
+                      </h2>
+                      <button onClick={() => setNav('workflows')} className="text-[13px] text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1">
+                        View all <ArrowRight className="w-3.5 h-3.5"/>
+                      </button>
+                    </div>
+                    <div className="space-y-4">
+                      {workflows.length === 0 ? (
+                        <div className="text-center py-10 border border-dashed border-white/10 rounded-2xl">
+                          <p className="text-slate-500 text-[14px]">No active workflows yet.</p>
+                          <button onClick={() => setNav('workflows')} className="mt-3 text-indigo-400 text-[13px] font-bold hover:text-indigo-300">
+                            Create your first workflow →
+                          </button>
+                        </div>
+                      ) : workflows.slice(0,3).map((wf, i) => {
+                        const progress = Math.round(((i + 1) / Math.max(wf.steps.length, 1)) * 100)
+                        return (
+                          <div key={wf.id} className="bg-black/40 border border-white/5 rounded-2xl p-5 hover:border-indigo-500/30 transition-all group">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex-1 min-w-0 pr-4">
+                                <h3 className="text-[15px] font-bold text-white truncate">{wf.title}</h3>
+                                <p className="text-[12px] text-slate-500 mt-0.5 truncate">{wf.description}</p>
+                              </div>
+                              <button
+                                onClick={() => startWorkflow(wf)}
+                                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[13px] font-bold flex items-center gap-2 transition-all shrink-0 opacity-0 group-hover:opacity-100"
+                              >
+                                <Play className="w-3.5 h-3.5 fill-current"/> Continue
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                <div className="h-full bg-indigo-500 rounded-full" style={{width: `${Math.min(progress, 100)}%`}}/>
+                              </div>
+                              <span className="text-[11px] text-slate-500 font-medium shrink-0">
+                                Step {Math.min(i+1, wf.steps.length)} of {wf.steps.length}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* LATEST OUTPUTS */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-8">
+                    <div className="flex items-center justify-between mb-6">
+                      <h2 className="text-[16px] font-bold text-white flex items-center gap-2">
+                        <Library className="w-5 h-5 text-pink-400"/> Latest Outputs
+                      </h2>
+                      <button onClick={() => setNav('outputs')} className="text-[13px] text-pink-400 hover:text-pink-300 font-medium flex items-center gap-1">
+                        View all <ArrowRight className="w-3.5 h-3.5"/>
+                      </button>
+                    </div>
+                    {activeOutputs.length === 0 ? (
+                      <div className="text-center py-10 border border-dashed border-white/10 rounded-2xl">
+                        <p className="text-slate-500 text-[14px]">No outputs saved yet.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-4">
+                        {activeOutputs.slice(0,4).map(output => (
+                          <div key={output.id} onClick={() => setViewingOutput(output)} className="bg-black/40 border border-white/5 rounded-2xl p-5 hover:border-pink-500/30 cursor-pointer transition-all group">
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className={`text-[10px] uppercase px-2.5 py-1 rounded-lg font-black border ${getPlatformStyle(output.platform)}`}>
+                                {getPlatformLabel(output.platform)}
+                              </span>
+                              {output.is_pinned && <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400"/>}
+                            </div>
+                            <p className="text-[13px] text-slate-300 line-clamp-3 leading-relaxed">{output.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* SAĞ KOLON */}
+                <div className="space-y-6">
+
+                  {/* PINNED PROMPTS */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6">
+                    <div className="flex items-center justify-between mb-5">
+                      <h2 className="text-[15px] font-bold text-white flex items-center gap-2">
+                        <Pin className="w-4 h-4 text-violet-400"/> Pinned Prompts
+                      </h2>
+                      <button onClick={() => setNav('all')} className="text-[12px] text-slate-400 hover:text-white transition-colors">View all</button>
+                    </div>
+                    <div className="space-y-2">
+                      {activePrompts.filter(p => p.is_pinned).length === 0 ? (
+                        <p className="text-[13px] text-slate-500 text-center py-6">Pin prompts to see them here</p>
+                      ) : activePrompts.filter(p => p.is_pinned).slice(0,5).map(p => (
+                        <div key={p.id} onClick={() => openWorkspace(p)} className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 cursor-pointer group transition-all">
+                          <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                            <BookOpen className="w-4 h-4 text-violet-400"/>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[13px] font-semibold text-slate-200 truncate group-hover:text-violet-300 transition-colors">{p.title}</p>
+                            <p className="text-[11px] text-slate-500">{p.category}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* QUICK ACTIONS */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6">
+                    <h2 className="text-[15px] font-bold text-white mb-5 flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-amber-400"/> Quick Actions
+                    </h2>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button onClick={() => { setShowAddPrompt(true); setEditingPrompt(null); setForm(emptyForm); }} className="flex flex-col items-center gap-2 p-4 bg-black/40 border border-white/5 rounded-2xl text-slate-400 hover:bg-violet-500/10 hover:border-violet-500/30 hover:text-violet-300 transition-all text-[12px] font-bold">
+                        <Plus className="w-5 h-5"/>New Prompt
+                      </button>
+                      <button onClick={() => setNav('workflows')} className="flex flex-col items-center gap-2 p-4 bg-black/40 border border-white/5 rounded-2xl text-slate-400 hover:bg-indigo-500/10 hover:border-indigo-500/30 hover:text-indigo-300 transition-all text-[12px] font-bold">
+                        <Play className="w-5 h-5"/>Start Workflow
+                      </button>
+                      <button onClick={() => { if(editingPrompt) triggerAIOptimize() }} className="flex flex-col items-center gap-2 p-4 bg-black/40 border border-white/5 rounded-2xl text-slate-400 hover:bg-violet-500/10 hover:border-violet-500/30 hover:text-violet-300 transition-all text-[12px] font-bold">
+                        <Wand2 className="w-5 h-5"/>AI Optimize
+                      </button>
+                      <button onClick={() => { setShowAddOutput(true); setOutputForm(emptyOutputForm); }} className="flex flex-col items-center gap-2 p-4 bg-black/40 border border-white/5 rounded-2xl text-slate-400 hover:bg-pink-500/10 hover:border-pink-500/30 hover:text-pink-300 transition-all text-[12px] font-bold">
+                        <Save className="w-5 h-5"/>Save Output
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* AI SUGGESTIONS */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6">
+                    <h2 className="text-[15px] font-bold text-white mb-5 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-violet-400"/> AI Suggestions
+                    </h2>
+                    <div className="space-y-4">
+                      {workflows.slice(0,1).map(wf => (
+                        <div key={wf.id} className="bg-indigo-500/5 border border-indigo-500/20 rounded-2xl p-4">
+                          <p className="text-[12px] text-slate-300 mb-3">
+                            Continue your <span className="text-indigo-400 font-bold">{wf.title}</span>. You stopped at Step 1.
+                          </p>
+                          <button onClick={() => startWorkflow(wf)} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[12px] font-bold transition-all">
+                            Continue Workflow
+                          </button>
+                        </div>
+                      ))}
+                      {activePrompts.filter(p => !p.is_pinned).slice(0,1).map(p => (
+                        <div key={p.id} className="bg-violet-500/5 border border-violet-500/20 rounded-2xl p-4">
+                          <p className="text-[12px] text-slate-300 mb-3">
+                            "<span className="text-violet-400 font-bold">{p.title}</span>" is frequently used. Pin it for quick access.
+                          </p>
+                          <button onClick={(e) => togglePinPrompt(p, e as any)} className="w-full py-2.5 bg-violet-600/30 hover:bg-violet-600/50 text-violet-300 rounded-xl text-[12px] font-bold transition-all">
+                            Pin Prompt
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+
+          ) :activeView === 'unified-prompt' ? (
             <div className="relative z-10 w-full max-w-5xl mx-auto space-y-6 pb-10">
               <div className="text-center mb-8">
                 <h2 className="text-3xl font-bold text-white mb-2">Unified Master Prompt</h2>
@@ -2753,9 +2974,9 @@ export default function Dashboard() {
               ))}
             </div>
           )}
-        </div>
+        </div> }
       </main>
-
+        
       {/* ============================================================================ */}
       {/* 8. MODALLAR (OVERLAYS)                                                       */}
       {/* ============================================================================ */}
