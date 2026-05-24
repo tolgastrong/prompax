@@ -5,7 +5,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
 import { 
   Bell, Copy, Plus, MoreVertical, Edit2, Trash2, Folder, LayoutGrid, AlertCircle, 
-  Check, Search, Sparkles, Loader2, Wand2, XCircle, CheckCircle2, History, 
+  Check, Search, Sparkles, Loader2, Wand2, Camera, XCircle, CheckCircle2, History, 
   RotateCcw, Star, Clock, Settings, BookOpen, MessageSquare, Share2, Zap,
   BarChart2, ChevronLeft, ChevronRight, Activity, RefreshCw, PieChart, ShieldAlert,
   ChevronDown, Library, Mail, MessageCircle, Code2, FileText, Lightbulb,
@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import OpenAI from 'openai';
 
 // ============================================================================
 // 2. ORTAK STİL TANIMLAMALARI (GLOBAL STYLES)
@@ -338,6 +339,27 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [isCollapsed, setIsCollapsed] = useState(false)
 
+  // --- WORKSPACE YÖNETİM SİSTEMİ ---
+  const [workspaces, setWorkspaces] = useState([
+    { id: '1', name: "Tolga's Workspace", icon: '🚀' },
+    { id: '2', name: "Agency Workspace", icon: '💼' }
+  ]);
+  const [activeWsId, setActiveWsId] = useState('1');
+  const activeWorkspace = workspaces.find(w => w.id === activeWsId) || workspaces[0];
+
+  // Modallar ve Geçici Stateler
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [newWsName, setNewWsName] = useState('');
+  const [newWsIcon, setNewWsIcon] = useState('✨');
+  const [showNewIconPicker, setShowNewIconPicker] = useState(false);
+
+  const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false);
+  const [editWsName, setEditWsName] = useState('');
+  const [selectedWorkspaceIcon, setSelectedWorkspaceIcon] = useState('🚀');
+  const [showIconPicker, setShowIconPicker] = useState(false);
+
+  const [showDeleteWorkspace, setShowDeleteWorkspace] = useState(false);
+
   // -----------------------------------------------------
   // SIDEBAR AÇILIR/KAPANIR DURUMLARI (ACCORDION STATES)
   // -----------------------------------------------------
@@ -349,6 +371,67 @@ export default function Dashboard() {
     platforms: true, 
     resources: true
   })
+
+  // ============================================================================
+  // WORKSPACE VERİLERİNİ ÇEKME (ISOLATION)
+  // ============================================================================
+  useEffect(() => {
+    const fetchWorkspaceData = async () => {
+      // Kullanıcı veya aktif çalışma alanı yoksa işlemi durdur
+      if (!user?.id || !activeWsId) return;
+
+      setLoading(true);
+
+      try {
+        // 1. Sadece aktif Workspace'e ait Promtları çek
+        const { data: promptsData, error: promptsError } = await supabase
+          .from('prompts')
+          .select('*')
+          .eq('user_id', user?.id)
+          .eq('workspace_id', activeWsId)
+          .order('created_at', { ascending: false });
+        
+        if (!promptsError && promptsData) setPrompts(promptsData);
+
+        // 2. Sadece aktif Workspace'e ait Koleksiyonları çek
+        const { data: collectionsData, error: collectionsError } = await supabase
+          .from('collections')
+          .select('*')
+          .eq('user_id', user?.id)
+          .eq('workspace_id', activeWsId)
+          .order('created_at', { ascending: false });
+        
+        if (!collectionsError && collectionsData) setCollections(collectionsData);
+
+        // 3. Sadece aktif Workspace'e ait Çıktıları (Outputs) çek
+        const { data: outputsData, error: outputsError } = await supabase
+          .from('outputs')
+          .select('*')
+          .eq('user_id', user?.id)
+          .eq('workspace_id', activeWsId)
+          .order('created_at', { ascending: false });
+        
+        if (!outputsError && outputsData) setOutputs(outputsData);
+
+        // 4. Sadece aktif Workspace'e ait Workflow'ları çek
+        const { data: workflowsData, error: workflowsError } = await supabase
+          .from('workflows')
+          .select('*')
+          .eq('user_id', user?.id)
+          .eq('workspace_id', activeWsId)
+          .order('created_at', { ascending: false });
+        
+        if (!workflowsError && workflowsData) setWorkflows(workflowsData);
+
+      } catch (error) {
+        console.error("Veri çekme hatası:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchWorkspaceData();
+  }, [user?.id, activeWsId, supabase]); // activeWsId değiştiği an bu kod baştan çalışır!
 
   // -----------------------------------------------------
   // MODAL DURUMLARI (MODAL VISIBILITY)
@@ -689,88 +772,104 @@ export default function Dashboard() {
     setSubmitting(true)
     setError('')
     
-    const newPrompt: Prompt = {
-      id: `mock-id-${Date.now()}`, 
-      title: form.title.trim(), 
-      description: form.description.trim(),
-      content: form.content.trim(), 
-      platforms: getFinalPlatforms(),
-      category: getFinalCategory(), 
-      collection_id: form.collection_id === 'none' ? null : form.collection_id, 
-      use_count: 0,
-      created_at: new Date().toISOString(), 
-      is_favorite: false, 
-      is_pinned: false, 
-      deleted_at: null
+    try {
+      // 1. SUPABASE'E GÖNDER (GERÇEK VERİTABANI İŞLEMİ)
+      const { data, error } = await supabase
+        .from('prompts')
+        .insert([{
+          title: form.title.trim(), 
+          description: form.description.trim(), // Veritabanına eklemediysen bunu 'notes' falan yapabilirsin veya tabloya ekleyebilirsin
+          content: form.content.trim(), 
+          platform: getFinalPlatforms()[0], // İlk platformu ana platform olarak al
+          category: getFinalCategory(), 
+          collection_id: form.collection_id === 'none' ? null : form.collection_id,
+          user_id: user?.id,
+          workspace_id: activeWsId // <--- SİHİRLİ DAMGA: Sadece aktif çalışma alanına kaydeder!
+        }])
+        .select();
+
+      if (error) throw error;
+
+      // 2. EKRANI GÜNCELLE
+      if (data) {
+        setPrompts(prev => [data[0], ...prev])
+      }
+      
+      setForm(emptyForm)
+      setShowAddPrompt(false)
+    } catch (err: any) {
+      setError(err.message || 'Error saving prompt')
+    } finally {
+      setSubmitting(false)
     }
-    
-    setPrompts(prev => [newPrompt, ...prev])
-    setForm(emptyForm)
-    setShowAddPrompt(false)
-    setSubmitting(false)
   }
 
+  // 11. MEVCUT PROMPTU GÜNCELLEME VE VERSİYONLAMA
   const handleEditPrompt = async () => {
-    if (!editingPrompt) return
+    if (!editingPrompt) return;
+    setSubmitting(true);
     
-    setSubmitting(true)
-    setError('')
-    
-    const updatedData = { 
-      ...editingPrompt, 
-      title: form.title.trim(), 
-      description: form.description.trim(),
-      content: form.content.trim(), 
-      platforms: getFinalPlatforms(), 
-      category: getFinalCategory(), 
-      collection_id: form.collection_id === 'none' ? null : form.collection_id
-    }
-    
-    setPrompts(prev => prev.map(p => p.id === editingPrompt.id ? updatedData : p))
-    
-    if (searchResults) {
-      setSearchResults(prev => prev ? prev.map(p => p.id === editingPrompt.id ? updatedData : p) : null)
-    }
-    
-    setEditingPrompt(null)
-    setShowAddPrompt(false)
-    setForm(emptyForm)
-    setSubmitting(false)
-  }
+    try {
+      // 1. ADIM: Mevcut (Eski) promptu kaybetmemek için Versiyonlar tablosuna yedekle
+      const { error: versionError } = await supabase
+        .from('versions')
+        .insert([{
+          prompt_id: editingPrompt.id,
+          content: editingPrompt.content, 
+          version_num: promptVersions.length + 1,
+          user_id: user?.id
+        }]);
 
-  const handleSaveOutput = async () => {
-    if (!outputForm.content.trim()) { 
-      setError('Output content is required.')
-      return 
+      if (versionError) console.error("Version backup error:", versionError);
+
+      // 2. ADIM: Asıl Promptu yeni verilerle güncelle
+      const { data, error } = await supabase
+        .from('prompts')
+        .update({
+          title: form.title,
+          content: form.content,
+          description: form.description,
+          category: form.category === 'Other' ? form.customCategory : form.category,
+          platforms: form.platforms.filter(p => p !== 'other')
+        })
+        .eq('id', editingPrompt.id)
+        .select();
+
+      if (error) throw error;
+
+      // 3. ADIM: Ekranı güncelle ve modalı kapat
+      setPrompts(prev => prev.map(p => p.id === editingPrompt.id ? data[0] : p));
+      setShowAddPrompt(false);
+      setEditingPrompt(null);
+      
+    } catch (err: any) {
+      setError(err.message || "Failed to update prompt.");
+    } finally {
+      setSubmitting(false);
     }
-    
-    setSubmitting(true)
-    setError('')
-    
-    const outputData: Output = {
-        id: editingOutput ? editingOutput.id : `mock-out-${Date.now()}`, 
-        prompt_id: outputForm.prompt_id === 'none' ? null : outputForm.prompt_id,
-        content: outputForm.content, 
-        format: getFinalOutputFormat(), 
-        platform: getFinalOutputPlatform(), 
-        notes: outputForm.notes,
-        metrics: editingOutput ? editingOutput.metrics : {}, 
-        created_at: editingOutput ? editingOutput.created_at : new Date().toISOString(), 
-        is_pinned: editingOutput ? editingOutput.is_pinned : false, 
-        deleted_at: null
+  };
+
+  const handleDeletePrompt = async (promptId: string) => {
+    if (!window.confirm("Are you sure you want to move this prompt to trash?")) return
+
+    try {
+      // Çöp kutusu mantığı (Soft Delete): deleted_at sütununa şu anın tarihini basıyoruz
+      const { error } = await supabase
+        .from('prompts')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', promptId)
+
+      if (error) throw error
+
+      // Ekranda aktif listeyi anında güncelle (Silineni listeden düşür)
+      setPrompts(prev => prev.map(p => p.id === promptId ? { ...p, deleted_at: new Date().toISOString() } : p))
+      
+      if (searchResults) {
+        setSearchResults(prev => prev ? prev.filter(p => p.id !== promptId) : null)
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error deleting prompt')
     }
-    
-    if (editingOutput) {
-       setOutputs(prev => prev.map(o => o.id === editingOutput.id ? outputData : o))
-    } else {
-       setOutputs(prev => [outputData, ...prev])
-    }
-    
-    setOutputForm(emptyOutputForm)
-    setEditingOutput(null)
-    setShowAddOutput(false)
-    setPromptSearchQuery('')
-    setSubmitting(false) 
   }
 
   const handleAddOutputInline = async (content: string, platform: string) => {
@@ -793,63 +892,164 @@ export default function Dashboard() {
     alert("Output successfully saved and linked to this prompt!")
   }
 
-  const handleMagicPaste = async () => {
-    if (!outputForm.magicPasteContent.trim()) { 
-      setError('Please paste your full chat log first.')
-      return 
-    }
-    
-    setIsMagicPasting(true)
-    setError('')
-    
-    setTimeout(() => {
-      setOutputForm(prev => ({ 
-        ...prev, 
-        content: "This is the auto-extracted clean output from the AI.", 
-        notes: "Auto-extracted via Magic Paste", 
-        magicPasteContent: '' 
-      }))
-      setIsMagicPasting(false)
-    }, 1500)
-  }
+const openai = new OpenAI({
+  apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY, // .env.local dosyanızdaki isim
+  dangerouslyAllowBrowser: true // Client-side için zorunludur
+});
 
-  // ============================================================================
-  // DURUM YÖNETİMİ (PIN, FAVORITE, TRASH, RESTORE)
-  // ============================================================================
-  const toggleFavorite = (prompt: Prompt, e: React.MouseEvent) => {
-    e.stopPropagation() 
-    const newStatus = !prompt.is_favorite
-    setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, is_favorite: newStatus } : p))
-  }
-
-  const togglePinPrompt = (prompt: Prompt, e: React.MouseEvent) => {
-    e.stopPropagation() 
-    const newStatus = !prompt.is_pinned
-    setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, is_pinned: newStatus } : p))
-  }
+const handleMagicPaste = async () => {
+  if (!outputForm.magicPasteContent.trim()) return;
   
-  const togglePinOutput = (output: Output, e: React.MouseEvent) => {
-    e.stopPropagation() 
-    const newStatus = !output.is_pinned
-    setOutputs(prev => prev.map(o => o.id === output.id ? { ...o, is_pinned: newStatus } : o))
+  setIsMagicPasting(true);
+  try {
+    // 1. AI ile metni yapılandırılmış JSON'a dönüştür
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini", // Hızlı ve ekonomik model
+      messages: [{
+        role: "system", 
+        content: "Verilen metni analiz et. İçinden bir 'title', 'promptContent' ve 'outputContent' çıkar. JSON formatında yanıt ver."
+      }, {
+        role: "user", 
+        content: outputForm.magicPasteContent 
+      }],
+      response_format: { type: "json_object" }
+    });
+
+    const parsed = JSON.parse(completion.choices[0].message.content || '{}');
+
+    // 2. Prompt'u Supabase'e ekle
+    const { data: pData, error: pError } = await supabase
+      .from('prompts')
+      .insert([{
+        title: parsed.title || 'Magic Paste',
+        content: parsed.promptContent || '',
+        category: 'Magic Paste',
+        user_id: user?.id,
+        workspace_id: activeWsId
+      }])
+      .select();
+
+    if (pError) throw pError;
+    const savedPrompt = pData[0];
+
+    // 3. Output'u bağlayıp ekle
+    const { error: oError } = await supabase
+      .from('outputs')
+      .insert([{
+        content: parsed.outputContent || '',
+        prompt_id: savedPrompt.id,
+        user_id: user?.id,
+        workspace_id: activeWsId
+      }]);
+
+    if (oError) throw oError;
+
+    // 4. Güncelleme
+    setPrompts(prev => [savedPrompt, ...prev]);
+    setShowAddOutput(false);
+    alert("Magic Paste başarıyla tamamlandı!");
+
+  } catch (err: any) {
+    console.error("Magic Paste hatası:", err);
+    alert("Analiz sırasında bir hata oluştu: " + err.message);
+  } finally {
+    setIsMagicPasting(false);
+  }
+};
+
+// OPTİMİZE EDİLMİŞ PROMPTU KABUL ETME
+  const acceptOptimization = () => {
+    if (optimizeResult?.improved_prompt) {
+      // Editor'deki mevcut metni AI'ın yazdığı ile değiştir
+      setForm(prev => ({ ...prev, content: optimizeResult.improved_prompt }));
+      setShowOptimizeModal(false);
+      setOptimizeResult(null); // Temizle
+    }
+  };
+
+  // 1. WORKFLOW SİLME FONKSİYONU
+  const handleDeleteWorkflow = async (workflowId: string) => {
+    if(!window.confirm("Are you sure you want to delete this workflow?")) return;
+    
+    try {
+      const { error } = await supabase
+        .from('workflows')
+        .delete()
+        .eq('id', workflowId);
+        
+      if(error) throw error;
+      
+      // Ekranda listeyi güncelle
+      setWorkflows(prev => prev.filter(w => w.id !== workflowId));
+    } catch(err: any) {
+      alert(err.message || "Error deleting workflow");
+    }
   }
 
-  const handleMoveToTrash = (id: string, type: 'prompt'|'output'|'version', e?: React.MouseEvent) => {
-    if(e) e.stopPropagation()
-    const now = new Date().toISOString()
-    
-    if(type === 'prompt') {
-      setPrompts(prev => prev.map(p => p.id === id ? { ...p, deleted_at: now, is_favorite: false, is_pinned: false } : p))
-      if (searchResults) {
-        setSearchResults(prev => prev ? prev.filter(p => p.id !== id) : null)
+  // 2. PIN (SABİTLEME) FONKSİYONLARI (Prompt & Output için)
+  const togglePinPrompt = async (prompt: Prompt, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const newPinnedStatus = !prompt.is_pinned;
+      const { error } = await supabase
+        .from('prompts')
+        .update({ is_pinned: newPinnedStatus })
+        .eq('id', prompt.id);
+        
+      if(error) throw error;
+      setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, is_pinned: newPinnedStatus } : p));
+    } catch (err: any) {
+      console.error("Error pinning prompt:", err);
+    }
+  }
+
+  const togglePinOutput = async (output: Output, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const newPinnedStatus = !output.is_pinned;
+      const { error } = await supabase
+        .from('outputs')
+        .update({ is_pinned: newPinnedStatus })
+        .eq('id', output.id);
+        
+      if(error) throw error;
+      setOutputs(prev => prev.map(o => o.id === output.id ? { ...o, is_pinned: newPinnedStatus } : o));
+    } catch (err: any) {
+       console.error("Error pinning output:", err);
+    }
+  }
+
+  // 3. OUTPUT, PROMPT VE VERSION'LARI ÇÖPE ATMA FONKSİYONU (Güncellendi)
+  const handleMoveToTrash = async (id: string, type: 'prompt' | 'output' | 'version', e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if(!window.confirm(`Are you sure you want to move this ${type} to trash?`)) return;
+
+    try {
+      if (type === 'version') {
+         // Versiyonlar için direkt kalıcı silme yapıyoruz (Çünkü veritabanında versiyon çöp kutusu yok)
+         const { error } = await supabase.from('versions').delete().eq('id', id);
+         if (error) throw error;
+         
+         setPromptVersions(prev => prev.filter(v => v.id !== id));
+      } else {
+         // Prompt ve Output için Soft Delete (Çöp kutusuna atma - deleted_at güncellenir)
+         const table = type === 'prompt' ? 'prompts' : 'outputs';
+         const { error } = await supabase
+           .from(table)
+           .update({ deleted_at: new Date().toISOString() })
+           .eq('id', id);
+
+         if(error) throw error;
+
+         // Ekranı güncelle
+         if(type === 'prompt') {
+           setPrompts(prev => prev.map(p => p.id === id ? { ...p, deleted_at: new Date().toISOString() } : p));
+         } else {
+           setOutputs(prev => prev.map(o => o.id === id ? { ...o, deleted_at: new Date().toISOString() } : o));
+         }
       }
-    } else if (type === 'output') {
-      setOutputs(prev => prev.map(o => o.id === id ? { ...o, deleted_at: now, is_pinned: false } : o))
-    } else if (type === 'version') {
-      // Version History içindeki silme
-      if(window.confirm("Bu versiyonu silmek (çöpe atmak) istediğinize emin misiniz?")) {
-        setPromptVersions(prev => prev.map(v => v.id === id ? { ...v, deleted_at: now } : v))
-      }
+    } catch (err: any) {
+      alert(err.message || `Error deleting ${type}`);
     }
   }
 
@@ -882,29 +1082,102 @@ export default function Dashboard() {
     }
   }
 
+  // 4. FAVORİLERE EKLEME / ÇIKARMA FONKSİYONU
+  const toggleFavorite = async (prompt: Prompt, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const newFavoriteStatus = !prompt.is_favorite;
+      const { error } = await supabase
+        .from('prompts')
+        .update({ is_favorite: newFavoriteStatus })
+        .eq('id', prompt.id);
+        
+      if(error) throw error;
+      
+      // Ekranı anında güncelle
+      setPrompts(prev => prev.map(p => p.id === prompt.id ? { ...p, is_favorite: newFavoriteStatus } : p));
+      
+      // Eğer kullanıcı arama yapmışsa, arama sonuçlarını da güncelle ki ekranda anlık değişsin
+      if (searchResults) {
+         setSearchResults(prev => prev ? prev.map(p => p.id === prompt.id ? { ...p, is_favorite: newFavoriteStatus } : p) : null);
+      }
+    } catch (err: any) {
+      console.error("Error toggling favorite:", err);
+    }
+  }
+
   const handleSaveCollection = async () => {
-    if (!collectionForm.name.trim()) return
-    
+    if (!collectionForm.name.trim()) {
+      alert('Collection name is required.')
+      return
+    }
+
     setSubmitting(true)
-    setError('')
-    
-    const newColl = { 
-      id: editingCollection ? editingCollection.id : `c-${Date.now()}`, 
-      name: collectionForm.name, 
-      description: collectionForm.description, 
-      is_public: false 
+
+    try {
+      const collectionData = {
+        name: collectionForm.name.trim(),
+        description: collectionForm.description.trim(),
+        user_id: user?.id,
+        workspace_id: activeWsId // Koleksiyonun hangi workspace'e ait olduğunu damgalıyoruz
+      }
+
+      if (editingCollection) {
+        // GÜNCELLEME (RENAME)
+        const { data, error } = await supabase
+          .from('collections')
+          .update(collectionData)
+          .eq('id', editingCollection.id)
+          .select()
+
+        if (error) throw error
+        if (data) {
+          setCollections(prev => prev.map(c => c.id === editingCollection.id ? data[0] : c))
+        }
+      } else {
+        // YENİ EKLEME (INSERT)
+        const { data, error } = await supabase
+          .from('collections')
+          .insert([collectionData])
+          .select()
+
+        if (error) throw error
+        if (data) {
+          setCollections(prev => [data[0], ...prev])
+        }
+      }
+
+      setCollectionForm({ name: '', description: '' })
+      setEditingCollection(null)
+      setShowAddCollection(false)
+    } catch (err: any) {
+      alert(err.message || 'Error saving collection')
+    } finally {
+      setSubmitting(false)
     }
-    
-    if (editingCollection) {
-      setCollections(prev => prev.map(c => c.id === editingCollection.id ? newColl : c))
-    } else {
-      setCollections(prev => [...prev, newColl])
+  }
+
+  const handleDeleteCollection = async (collectionId: string) => {
+    try {
+      // Veritabanından koleksiyonu uçuruyoruz (SQL'de ON DELETE CASCADE olduğu için bağlantılı prompts otomatik null olur)
+      const { error } = await supabase
+        .from('collections')
+        .delete()
+        .eq('id', collectionId)
+
+      if (error) throw error
+
+      // Sol menüdeki listeden kaldır
+      setCollections(prev => prev.filter(c => c.id !== collectionId))
+      
+      // Eğer kullanıcı şu an silinen koleksiyonun içindeyse, All Prompts (dashboard) görünümüne geri fırlat
+      if (activeCollection === collectionId) {
+        setActiveCollection(null)
+        setActiveView('dashboard')
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error deleting collection')
     }
-    
-    setShowAddCollection(false)
-    setEditingCollection(null)
-    setCollectionForm({ name: '', description: '' })
-    setSubmitting(false)
   }
 
   const openWorkspace = (prompt: Prompt) => {
@@ -984,32 +1257,222 @@ export default function Dashboard() {
     }
   }
 
-  // ============================================================================
-  // AI OPTIMIZE
-  // ============================================================================
-  const triggerAIOptimize = (e?: React.MouseEvent) => {
-    if(e) e.preventDefault()
-    
-    setIsOptimizing(true)
-    setOptimizeResult(null)
-    setShowOptimizeModal(true)
-    
-    setTimeout(() => {
-      setOptimizeResult({
-        strengths: ["Clear objective", "Good tone"],
-        weaknesses: ["Lacks constraints", "Vague formatting"],
-        improved_prompt: form.content + "\n\nFormat the output in markdown with clear headings."
-      })
-      setIsOptimizing(false)
-    }, 2000)
-  }
-
-  const acceptOptimization = () => {
-    if(optimizeResult) {
-      setForm(prev => ({...prev, content: optimizeResult.improved_prompt}))
-      setShowOptimizeModal(false)
+  // OUTPUT (ÇIKTI) KAYDETME VE GÜNCELLEME FONKSİYONU
+  const handleSaveOutput = async () => {
+    // İçerik boş mu diye kontrol et
+    if (!outputForm.content.trim()) {
+      alert("Output content is required!");
+      return;
     }
-  }
+
+    setSubmitting(true);
+    try {
+      // Veritabanına gönderilecek paket
+      const payload = {
+        content: outputForm.content,
+        format: outputForm.format === 'other' ? outputForm.customFormat : outputForm.format,
+        platform: outputForm.platform === 'other' ? outputForm.customPlatform : outputForm.platform,
+        notes: outputForm.notes,
+        prompt_id: outputForm.prompt_id === 'none' ? null : outputForm.prompt_id,
+        user_id: user?.id,
+        workspace_id: activeWsId // Veriyi sadece bu workspace'e bağla
+      };
+
+      if (editingOutput) {
+        // MEVCUT ÇIKTIYI GÜNCELLEME (UPDATE)
+        const { error } = await supabase
+          .from('outputs')
+          .update(payload)
+          .eq('id', editingOutput.id);
+
+        if (error) throw error;
+        
+        // Ekranı güncelle
+        setOutputs(prev => prev.map(o => o.id === editingOutput.id ? { ...o, ...payload } : o));
+      } else {
+        // YENİ ÇIKTI EKLEME (INSERT)
+        const { data, error } = await supabase
+          .from('outputs')
+          .insert([payload])
+          .select();
+
+        if (error) throw error;
+        
+        // Ekranı güncelle
+        if (data) setOutputs(prev => [data[0], ...prev]);
+      }
+
+      // İşlem bitince modalı kapat
+      setShowAddOutput(false);
+      setEditingOutput(null);
+    } catch (err: any) {
+      console.error("Save output error:", err);
+      alert(err.message || "Failed to save output");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // 12. YENİ WORKSPACE OLUŞTURMA (HATA AVCI SÜRÜMÜ)
+  const handleCreateWorkspace = async () => {
+    if (!newWsName.trim()) {
+      alert("Workspace name is required!");
+      return;
+    }
+
+    // 🕵️‍♂️ HATA TESPİTİ - 1: Kullanıcı durumu ne?
+    console.log("=== WORKSPACE OLUŞTURMA BAŞLADI ===");
+    console.log("Giriş Yapmış Kullanıcı Nesnesi:", user);
+    console.log("Gönderilecek user_id:", user?.id);
+
+    setSubmitting(true);
+    try {
+      const payload = {
+        name: newWsName,
+        icon: newWsIcon,
+        user_id: user?.id // Eğer burası null/undefined ise RLS engelleyecektir
+      };
+
+      console.log("Supabase'e gönderilen paket (Payload):", payload);
+
+      const { data, error } = await supabase
+        .from('workspaces')
+        .insert([payload])
+        .select();
+
+      // 🕵️‍♂️ HATA TESPİTİ - 2: Supabase tam olarak ne yanıt verdi?
+      console.log("Supabase'den dönen Data:", data);
+      console.log("Supabase'den dönen Hata (Error):", error);
+
+      if (error) throw error;
+
+      if (data && data[0]) {
+        setWorkspaces(prev => [...prev, data[0]]);
+        setActiveWsId(data[0].id);
+        alert("Başarılı! Veritabanına kaydedildi.");
+      } else {
+        // Hata fırlatmadı ama boş döndüyse %99 RLS engellemiştir
+        alert("Veritabanından boş veri döndü! Muhtemelen user_id eşleşmediği için Supabase RLS politikası kaydı engelledi. Konsolu (F12) kontrol et.");
+      }
+      
+      setShowCreateWorkspace(false);
+      setNewWsName('');
+      setNewWsIcon('😀');
+    } catch (err: any) {
+      console.error("Yakalanan Hata Nesnesi:", err);
+      alert("Failed to create workspace: " + (err.message || JSON.stringify(err)));
+    } finally {
+      setSubmitting(false);
+      console.log("=== WORKSPACE OLUŞTURMA BİTTİ ===");
+    }
+  };
+
+  // 13. WORKSPACE GÜNCELLEME (AYARLAR)
+  const handleUpdateWorkspace = async () => {
+    if (!editWsName.trim()) {
+      alert("Workspace name cannot be empty!");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .update({
+          name: editWsName,
+          icon: selectedWorkspaceIcon
+        })
+        .eq('id', activeWsId)
+        .select();
+
+      if (error) throw error;
+
+      if (data && data[0]) {
+        // Listeyi güncellenen veriyle senkronize et
+        setWorkspaces(prev => prev.map(w => w.id === activeWsId ? data[0] : w));
+      }
+      setShowWorkspaceSettings(false);
+    } catch (err: any) {
+      alert("Failed to update workspace: " + err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // 14. WORKSPACE SİLME
+  const handleDeleteWorkspace = async () => {
+    if (workspaces.length <= 1) {
+      alert("You cannot delete your only workspace!");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('workspaces')
+        .delete()
+        .eq('id', activeWsId);
+
+      if (error) throw error;
+
+      // Silinen workspace'i state'den çıkar ve ilk workspace'i aktif yap
+      const newWorkspaces = workspaces.filter(w => w.id !== activeWsId);
+      setWorkspaces(newWorkspaces);
+      setActiveWsId(newWorkspaces[0].id);
+      setShowDeleteWorkspace(false);
+    } catch (err: any) {
+      alert("Failed to delete workspace: " + err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ============================================================================
+  // AI PROMPT OPTİMİZASYON FONKSİYONU
+  // ============================================================================
+  const triggerAIOptimize = async () => {
+    if (!form.content || form.content.trim() === '') {
+      alert("Please write a prompt first to optimize it.");
+      return;
+    }
+
+    setShowOptimizeModal(true); // Önce loading/analiz ekranını aç
+    setIsOptimizing(true);
+
+    try {
+      const openai = new OpenAI({
+        apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
+        dangerouslyAllowBrowser: true
+      });
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{
+          role: "system",
+          content: "You are an Expert Prompt Engineer. Analyze the given prompt. Return a JSON object with 3 keys: 'strengths' (array of strings), 'weaknesses' (array of strings), and 'improved_prompt' (a much better, structured, and clearer version of the original prompt)."
+        }, {
+          role: "user",
+          content: form.content
+        }],
+        response_format: { type: "json_object" }
+      });
+
+      const parsed = JSON.parse(completion.choices[0].message.content || '{}');
+
+      // AI'dan gelen veriyi state'e aktar
+      setOptimizeResult({
+        strengths: parsed.strengths || ["Clear intent"],
+        weaknesses: parsed.weaknesses || ["Could be more specific"],
+        improved_prompt: parsed.improved_prompt || form.content
+      });
+
+    } catch (error: any) {
+      console.error("Optimization error:", error);
+      alert("An error occurred during AI optimization.");
+      setShowOptimizeModal(false);
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
 
   // ============================================================================
   // DRAG & DROP İŞLEMLERİ (NATIVE HTML5 - SÜRÜKLE BIRAK)
@@ -1103,24 +1566,62 @@ export default function Dashboard() {
   // WORKFLOW BUILDER & ENGINE (TAMAMEN BAĞIMSIZ VERSİYON MİMARİSİ)
   // ============================================================================
 
-  const saveWorkflowBuilder = () => {
+  const saveWorkflowBuilder = async () => {
     if(!workflowForm.title.trim()) return
+
+    setSubmitting(true)
     
+    // Adımların platform verilerini temizle
     const finalizedSteps = workflowForm.steps.map(step => {
-      let finalPlats = step.platforms.filter(p => p !== 'other')
       return {...step, platforms: step.platforms.length > 0 ? step.platforms : ['chatgpt']}
     })
 
-    const finalWf = {...workflowForm, steps: finalizedSteps}
+    try {
+      const workflowData = {
+        title: workflowForm.title,
+        description: workflowForm.description || '',
+        steps: finalizedSteps,
+        user_id: user?.id,
+        workspace_id: activeWsId // SİHİRLİ DAMGA
+      }
 
-    const existing = workflows.find(w => w.id === workflowForm.id)
-    if(existing) {
-      setWorkflows(prev => prev.map(w => w.id === workflowForm.id ? finalWf : w))
-    } else {
-      setWorkflows(prev => [...prev, finalWf])
+      // Eğer id "wf-" ile başlıyorsa bu yeni bir oluşturmadır, UUID ise veritabanında zaten vardır (güncellemedir).
+      const isExisting = !workflowForm.id.startsWith('wf-');
+
+      let response;
+
+      if (isExisting) {
+        // GÜNCELLEME (UPDATE)
+        response = await supabase
+          .from('workflows')
+          .update(workflowData)
+          .eq('id', workflowForm.id)
+          .select()
+      } else {
+        // YENİ EKLEME (INSERT)
+        response = await supabase
+          .from('workflows')
+          .insert([workflowData])
+          .select()
+      }
+
+      if (response.error) throw response.error
+
+      if (response.data && response.data.length > 0) {
+        const savedWf = response.data[0]
+        if (isExisting) {
+          setWorkflows(prev => prev.map(w => w.id === savedWf.id ? savedWf : w))
+        } else {
+          setWorkflows(prev => [savedWf, ...prev])
+        }
+      }
+      
+      setShowWorkflowBuilder(false)
+    } catch (err: any) {
+      alert(err.message || "Error saving workflow")
+    } finally {
+      setSubmitting(false)
     }
-    
-    setShowWorkflowBuilder(false)
   }
 
   const startWorkflow = (workflow: AppWorkflow) => {
@@ -1324,57 +1825,84 @@ export default function Dashboard() {
   // WORKFLOW COMPLETED EKRANI AKSİYONLARI & DIŞA AKTARMA (CSV)
   // ============================================================================
   
-  const saveAllWorkflowAssets = () => {
+  const saveAllWorkflowAssets = async () => {
     if(!activeWorkflow) return
+    setSubmitting(true)
+
     let newPromptsCount = 0
     let newOutputsCount = 0
-    
-    const newPrompts: Prompt[] = []
-    const newOutputs: Output[] = []
 
-    activeWorkflow.steps.forEach(step => {
-      const iters = executionVersions[step.id] || []
-      iters.forEach(iter => {
-        // Promtpu kaydet
-        const pId = `wf-p-${Date.now()}-${Math.random()}`
-        newPrompts.push({
-          id: pId,
-          title: `${activeWorkflow.title} - ${iter.title}`,
-          description: iter.goal,
-          content: iter.prompt_text,
-          platforms: iter.platforms,
-          category: 'Other',
-          use_count: 0,
-          created_at: new Date().toISOString(),
-          collection_id: null,
-          is_favorite: false,
-          is_pinned: false,
-          deleted_at: null
-        })
-        newPromptsCount++
-        
-        // Output boş değilse kaydet
-        if(iter.output_text.trim()) {
-          newOutputs.push({
-            id: `wf-o-${Date.now()}-${Math.random()}`,
-            prompt_id: pId,
-            content: iter.output_text,
-            format: 'other',
-            platform: iter.platforms[0] || 'chatgpt',
-            notes: `Auto-saved from workflow execution`,
-            metrics: {},
-            created_at: new Date().toISOString(),
-            is_pinned: false,
-            deleted_at: null
+    try {
+      // 1. Önce kaydedilecek tüm veri paketini hazırlayalım
+      const assetsToSave: any[] = []
+      
+      activeWorkflow.steps.forEach(step => {
+        const iters = executionVersions[step.id] || []
+        iters.forEach(iter => {
+          assetsToSave.push({
+            promptTitle: `${activeWorkflow.title} - ${iter.title}`,
+            description: iter.goal,
+            promptContent: iter.prompt_text,
+            outputContent: iter.output_text,
+            platforms: iter.platforms
           })
-          newOutputsCount++
-        }
+        })
       })
-    })
 
-    setPrompts(prev => [...newPrompts, ...prev])
-    setOutputs(prev => [...newOutputs, ...prev])
-    alert(`Başarıyla ${newPromptsCount} prompt ve ${newOutputsCount} çıktı kütüphanenize kaydedildi.`)
+      // 2. Sırayla Supabase'e gönderelim
+      for (const asset of assetsToSave) {
+        // A. Önce Prompt'u kaydet
+        const { data: pData, error: pError } = await supabase
+          .from('prompts')
+          .insert([{
+            title: asset.promptTitle,
+            description: asset.description,
+            content: asset.promptContent,
+            platform: asset.platforms[0] || 'chatgpt',
+            category: 'Other',
+            user_id: user?.id,
+            workspace_id: activeWsId // SİHİRLİ DAMGA
+          }])
+          .select()
+
+        if (pError) throw pError
+
+        if (pData && pData.length > 0) {
+          const savedPrompt = pData[0]
+          setPrompts(prev => [savedPrompt, ...prev])
+          newPromptsCount++
+
+          // B. Eğer çıktı (Output) boş değilse, az önce oluşan Prompt'a bağlayıp kaydet
+          if (asset.outputContent.trim()) {
+            const { data: oData, error: oError } = await supabase
+              .from('outputs')
+              .insert([{
+                prompt_id: savedPrompt.id, // Gerçek ID ile bağlandı
+                content: asset.outputContent,
+                format: 'other',
+                platform: asset.platforms[0] || 'chatgpt',
+                notes: `Auto-saved from workflow execution`,
+                user_id: user?.id,
+                workspace_id: activeWsId // SİHİRLİ DAMGA
+              }])
+              .select()
+
+            if (oError) throw oError
+            
+            if (oData && oData.length > 0) {
+              setOutputs(prev => [oData[0], ...prev])
+              newOutputsCount++
+            }
+          }
+        }
+      }
+
+      alert(`Başarıyla ${newPromptsCount} prompt ve ${newOutputsCount} çıktı kütüphanenize kaydedildi.`)
+    } catch (err: any) {
+      alert(err.message || "Error saving workflow assets")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   /**
@@ -1432,49 +1960,66 @@ export default function Dashboard() {
     setNav('unified-prompt')
   }
 
-  const saveUnifiedPrompt = () => {
+  const saveUnifiedPrompt = async () => {
     if(!unifiedForm.title.trim() || !unifiedForm.combinedPrompt.trim()) {
       alert("Title and Prompt are required.")
       return
     }
 
-    const pId = `uni-p-${Date.now()}`
-    
-    const newPrompt: Prompt = {
-      id: pId,
-      title: unifiedForm.title,
-      description: unifiedForm.description,
-      content: unifiedForm.combinedPrompt,
-      platforms: unifiedForm.platforms.length > 0 ? unifiedForm.platforms : ['chatgpt'],
-      category: 'General',
-      use_count: 0,
-      created_at: new Date().toISOString(),
-      collection_id: null,
-      is_favorite: true,
-      is_pinned: true,
-      deleted_at: null
-    }
+    setSubmitting(true)
 
-    const newOutput: Output = {
-      id: `uni-o-${Date.now()}`,
-      prompt_id: pId,
-      content: unifiedForm.combinedOutput,
-      format: 'other',
-      platform: unifiedForm.platforms[0] || 'chatgpt',
-      notes: 'Generated via Unified Workflow Engine',
-      metrics: {},
-      created_at: new Date().toISOString(),
-      is_pinned: true,
-      deleted_at: null
-    }
+    try {
+      // 1. ANA PROMPT'U SUPABASE'E KAYDET (Açık olan Workspace'e)
+      const { data: promptData, error: promptError } = await supabase
+        .from('prompts')
+        .insert([{
+          title: unifiedForm.title,
+          description: unifiedForm.description,
+          content: unifiedForm.combinedPrompt,
+          platform: unifiedForm.platforms[0] || 'chatgpt',
+          category: 'General',
+          user_id: user?.id,
+          workspace_id: activeWsId, // <-- SİHİRLİ DAMGA
+          is_favorite: true
+        }])
+        .select()
 
-    setPrompts(prev => [newPrompt, ...prev])
-    if(unifiedForm.combinedOutput.trim()) {
-      setOutputs(prev => [newOutput, ...prev])
+      if (promptError) throw promptError
+
+      if (promptData && promptData.length > 0) {
+        // Ekrana gerçek veriyi bas
+        setPrompts(prev => [promptData[0], ...prev])
+
+        // 2. EĞER ÇIKTI (OUTPUT) VARSA ONU DA KAYDET
+        if(unifiedForm.combinedOutput.trim()) {
+          const { data: outputData, error: outputError } = await supabase
+            .from('outputs')
+            .insert([{
+              prompt_id: promptData[0].id, // Yeni oluşan promptun gerçek ID'sini bağlıyoruz
+              content: unifiedForm.combinedOutput,
+              format: 'other',
+              platform: unifiedForm.platforms[0] || 'chatgpt',
+              notes: 'Generated via Unified Workflow Engine',
+              user_id: user?.id,
+              workspace_id: activeWsId // <-- SİHİRLİ DAMGA
+            }])
+            .select()
+            
+          if (outputError) throw outputError
+          
+          if (outputData && outputData.length > 0) {
+            setOutputs(prev => [outputData[0], ...prev])
+          }
+        }
+      }
+      
+      alert("Unified Prompt & Outputs successfully generated and saved!")
+      setNav('all')
+    } catch (err: any) {
+      alert(err.message || "Error saving unified prompt")
+    } finally {
+      setSubmitting(false)
     }
-    
-    alert("Unified Prompt & Outputs successfully generated and saved!")
-    setNav('all')
   }
 
   // ============================================================================
@@ -1587,28 +2132,63 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* 2. ACTIVE WORKSPACE */}
+        {/* 2. ACTIVE WORKSPACE (DİNAMİK VE ÇALIŞAN YAPI) */}
         {!isCollapsed && (
           <div className="p-4 border-b border-white/5 shrink-0">
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 px-1">
-              Active Workspace
-            </p>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 px-1">Active Workspace</p>
+            
             <DropdownMenu>
-              <DropdownMenuTrigger className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 transition-colors p-2 rounded-xl border border-white/10 outline-none">
+              <DropdownMenuTrigger className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 transition-colors p-2 rounded-xl border border-white/10 outline-none group">
                 <div className="flex items-center gap-2 overflow-hidden">
-                  <div className="w-6 h-6 rounded bg-violet-600/20 text-violet-400 flex items-center justify-center font-bold text-xs shrink-0">
-                    {user?.user_metadata?.full_name ? user.user_metadata.full_name.charAt(0).toUpperCase() : 'T'}
+                  <div className="w-7 h-7 rounded-lg bg-violet-600/20 text-violet-400 flex items-center justify-center text-sm shrink-0 border border-violet-500/20 group-hover:bg-violet-500/30 transition-colors">
+                    {activeWorkspace.icon}
                   </div>
-                  <span className="text-sm font-medium text-slate-200 truncate">
-                    {user?.user_metadata?.full_name ? `${user.user_metadata.full_name.split(' ')[0]}'s Workspace` : 'Tolga\'s Workspace'}
+                  <span className="text-sm font-bold text-slate-200 truncate group-hover:text-white transition-colors">
+                    {activeWorkspace.name}
                   </span>
                 </div>
                 <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-56 bg-[#0A0A0F] border-white/10 text-slate-300 ml-4">
-                <DropdownMenuItem className="hover:bg-white/5 focus:bg-white/5 cursor-pointer text-violet-400">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create New Workspace
+              
+              <DropdownMenuContent className="w-64 bg-[#0A0A0F] border-white/10 text-slate-300 ml-4 rounded-xl shadow-2xl p-2 z-50">
+                <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 mt-1">
+                  Switch Workspace
+                </div>
+                
+                {/* ÇALIŞMA ALANLARI (DİNAMİK LİSTE) */}
+                <div className="space-y-1 mb-2">
+                  {workspaces.map(ws => (
+                    <DropdownMenuItem 
+                      key={ws.id} 
+                      onClick={() => setActiveWsId(ws.id)} 
+                      className={`gap-3 cursor-pointer py-2.5 rounded-lg text-sm transition-all outline-none ${activeWsId === ws.id ? 'bg-white/10' : 'hover:bg-white/5'}`}
+                    >
+                      <div className={`w-6 h-6 rounded-md flex items-center justify-center text-xs shrink-0 ${activeWsId === ws.id ? 'bg-violet-500/20 border border-violet-500/30' : 'bg-white/5 border border-white/10'}`}>
+                        {ws.icon}
+                      </div>
+                      <span className={`flex-1 truncate ${activeWsId === ws.id ? 'text-white font-bold' : 'text-slate-400 font-medium'}`}>
+                        {ws.name}
+                      </span>
+                      {activeWsId === ws.id && <Check size={14} className="text-violet-400 shrink-0" />}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+
+                <DropdownMenuSeparator className="bg-white/5 my-2" />
+
+                {/* AYARLAR VE YENİ OLUŞTURMA */}
+                <DropdownMenuItem onClick={() => { setEditWsName(activeWorkspace.name); setSelectedWorkspaceIcon(activeWorkspace.icon); setShowWorkspaceSettings(true); }} className="gap-2.5 hover:bg-white/5 cursor-pointer py-2 rounded-lg text-sm text-slate-300 outline-none">
+                  <Settings size={14} className="text-slate-400 shrink-0" /> <span className="truncate">Workspace Settings</span>
+                </DropdownMenuItem>
+                
+                <DropdownMenuItem onClick={() => { setNewWsName(''); setNewWsIcon('✨'); setShowCreateWorkspace(true); }} className="gap-2.5 hover:bg-white/5 cursor-pointer py-2 rounded-lg text-sm text-slate-300 outline-none">
+                  <Plus size={14} className="text-slate-400 shrink-0" /> <span className="truncate">Create New Workspace</span>
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator className="bg-white/5 my-2" />
+
+                <DropdownMenuItem onClick={() => setShowDeleteWorkspace(true)} className="gap-2.5 text-red-400 hover:bg-red-500/10 cursor-pointer py-2 rounded-lg text-sm outline-none">
+                  <Trash2 size={14} className="shrink-0" /> <span className="truncate">Delete Workspace</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -2647,7 +3227,7 @@ export default function Dashboard() {
                       
                       <div className="mt-6 md:mt-0 flex gap-3 shrink-0">
   <button onClick={() => { setWorkflowForm(wf); setShowWorkflowBuilder(true); }} className="bg-white/5 hover:bg-white/10 text-white px-5 py-3 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all border border-transparent"><Edit2 className="w-4 h-4" /> Edit</button>
-  <button onClick={() => { if(window.confirm("Are you sure you want to delete this workflow?")) setWorkflows(prev => prev.filter(w=>w.id!==wf.id)) }} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-5 py-3 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all border border-transparent"><Trash2 className="w-4 h-4" /> Delete</button>
+  <button onClick={() => handleDeleteWorkflow(wf.id)} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-5 py-3 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all border border-transparent"><Trash2 className="w-4 h-4" /> Delete</button>
   <button onClick={() => startWorkflow(wf)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-xl flex items-center gap-2 text-[14px] font-bold transition-all shadow-[0_0_20px_-5px_rgba(99,102,241,0.5)]"><Play className="w-4 h-4 fill-current" /> Run Workflow</button>
 </div>
                     </div>
@@ -2980,55 +3560,145 @@ export default function Dashboard() {
       {/* ============================================================================ */}
       {/* 8. MODALLAR (OVERLAYS)                                                       */}
       {/* ============================================================================ */}
+{/* ============================================================================ */}
+      {/* ============================================================================ */}
+      {/* WORKSPACE MODALLARI (GELİŞMİŞ EMOJİ, TIKLA KAPAN & PROFESYONEL SCROLL)       */}
+      {/* ============================================================================ */}
 
-      {/* SELECT FROM ALL PROMPTS MODAL (DEV EKRAN 95vw, 95vh) */}
-      <Dialog open={showAllPromptsModal} onOpenChange={setShowAllPromptsModal}>
-        <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-3xl sm:max-w-[95vw] w-[95vw] h-[95vh] shadow-2xl p-0 gap-0 overflow-hidden text-white flex flex-col [&>button]:hidden">
-          <div className="p-8 border-b border-white/5 bg-[#060609] flex justify-between items-center shrink-0">
-            <div>
-              <DialogTitle className="text-[22px] font-bold flex items-center gap-3"><LayoutGrid className="w-6 h-6 text-violet-400"/> Select Prompt from Library</DialogTitle>
-              <p className="text-slate-400 text-[14px] mt-1">Choose a base prompt to inject into your workflow execution.</p>
-            </div>
-            <button onClick={() => setShowAllPromptsModal(false)} className="p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors"><XCircle className="w-6 h-6 text-slate-400 hover:text-white" /></button>
+      {/* 1. CREATE NEW WORKSPACE MODAL */}
+      <Dialog open={showCreateWorkspace} onOpenChange={(open) => { setShowCreateWorkspace(open); if(!open) setShowNewIconPicker(false); }}>
+        <DialogContent aria-describedby={undefined} className="bg-[#0A0A0F] border-white/10 rounded-3xl w-full max-w-md p-0 text-white shadow-2xl flex flex-col [&>button]:hidden">
+          <div className="p-6 border-b border-white/5 bg-[#060609] flex justify-between items-center">
+            <DialogTitle className="text-lg font-bold">Create Workspace</DialogTitle>
+            <button onClick={() => setShowCreateWorkspace(false)} className="text-slate-500 hover:text-white"><XCircle size={18} /></button>
           </div>
-          
-          <div className="p-8 bg-[#0A0A0F] border-b border-white/5 shrink-0 relative z-10">
-            <div className="relative max-w-3xl mx-auto">
-              <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-              <Input 
-                value={modalSearchQuery}
-                onChange={e => setModalSearchQuery(e.target.value)}
-                placeholder="Search across all your prompts..."
-                className="w-full bg-[#060609] border-white/10 rounded-2xl pl-14 pr-6 py-7 text-[15px] text-white focus-visible:ring-2 focus-visible:ring-violet-500/50 transition-all shadow-inner"
-              />
-            </div>
-          </div>
-
-          <div className={`flex-1 overflow-y-auto p-10 bg-[#060609] ${scrollbarClasses}`}>
-            {modalFilteredPrompts.length === 0 ? (
-              <div className="text-center py-20">
-                <p className="text-slate-500 font-medium text-[16px]">No prompts found matching your search.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {modalFilteredPrompts.map(p => (
-                  <div key={p.id} onClick={() => handleSelectPromptForExecution(p.content, 'all_prompts')} className="bg-[#0A0A0F]/80 border border-white/5 rounded-2xl p-6 hover:border-violet-500/50 hover:shadow-[0_0_30px_-5px_rgba(139,92,246,0.15)] cursor-pointer transition-all group flex flex-col h-[250px] relative overflow-hidden">
-                    <div className="flex-1 min-w-0 mb-4 z-10">
-                      <h4 className="text-[15px] font-bold text-white group-hover:text-violet-300 transition-colors mb-2 truncate">{p.title}</h4>
-                      {p.description && <p className="text-[12px] text-slate-500 truncate mb-3">{p.description}</p>}
-                      <p className="text-[13px] text-slate-400 line-clamp-4 leading-relaxed font-serif">{p.content}</p>
-                    </div>
-                    <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between z-10">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 bg-white/5 px-2.5 py-1 rounded-md">{p.category}</span>
-                      <div className="flex -space-x-1.5">
-                        {p.platforms.slice(0,3).map(plat => <span key={plat} className={`w-5 h-5 rounded-full border border-[#0A0A0F] flex items-center justify-center text-[7px] font-bold ${getPlatformStyle(plat)}`}>{plat.substring(0,1).toUpperCase()}</span>)}
+          <div className="p-6 space-y-6">
+            <div className="flex flex-col items-center">
+              <div className="relative">
+                <button onClick={() => setShowNewIconPicker(!showNewIconPicker)} className="w-20 h-20 rounded-2xl bg-gradient-to-br from-violet-600/20 to-indigo-600/20 border border-violet-500/30 flex items-center justify-center text-4xl shadow-xl hover:scale-105 transition-all group relative z-50">
+                  {newWsIcon}
+                  <div className="absolute inset-0 bg-black/40 rounded-2xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><Camera size={20} className="text-white" /></div>
+                </button>
+                
+                {/* İKON SEÇİCİ VE GÖRÜNMEZ KAPATMA ALANI */}
+                {showNewIconPicker && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowNewIconPicker(false)} />
+                    <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 w-[340px] p-4 bg-[#16161E] border border-white/10 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] animate-in zoom-in-95">
+                      <div className="grid grid-cols-7 gap-2 max-h-[220px] overflow-y-auto overflow-x-hidden pr-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/20">
+                        {['😀','😂','🥰','😎','🤓','🤔','🤫','🤯','🥳','🥶','😈','👻','👽','🤖','💩','😺','🙈','🐶','🦊','🐱','🦁','🐯','🦄','🦓','🐷','🐘','🐭','🐰','🐻','🐼','🐾','🐦','🐧','🦅','🦆','🦉','🐸','🐢','🐍','🐳','🐬','🐟','🐙','🦋','🐛','🐝','🐞','🕷️','💐','🌸','🌹','🌺','🌻','🌼','🌷','🌱','🌲','🌴','🌵','🌿','🍁','🍂','🍇','🍉','🍊','🍋','🍌','🍍','🍎','🍏','🍒','🍓','🥝','🍅','🥑','🍆','🥔','🥕','🌽','🌶️','🥦','🍄','🍞','🥐','🥖','🥨','🧀','🍖','🍗','🥩','🥓','🍔','🍟','🍕','🌭','🥪','🌮','🌯','🥚','🍳','🥗','🍿','🍱','🍘','🍙','🍚','🍜','🍝','🍠','🍣','🍤','🍦','🍧','🍨','🍩','🍪','🎂','🍰','🍫','🍬','🍭','🍯','🍼','🥛','☕','🍵','🍶','🍾','🍷','🍸','🍹','🍺','🍻','🥂','🥃','🌍','🗺️','🏔️','🌋','🏕️','🏖️','🏝️','🏟️','🏛️','🏗️','🏠','🏡','🏢','🏥','🏦','🏨','🏫','🏭','🏰','⛩️','⛲','⛺','🌃','🏙️','🌄','🌅','🌆','🌇','🌉','🎠','🎡','🎢','🚂','🚄','🚆','🚇','🚋','🚌','🚑','🚒','🚓','🚕','🚗','🚜','🏎️','🏍️','🚲','🛴','🛣️','🛤️','⛽','🚨','🚥','🛑','⚓','⛵','🚤','🛳️','⛴️','✈️','🛩️','🛫','🛬','🚁','🚀','🛸','🌟','🌠','☁️','⛅','⛈️','🌤️','🌥️','🌦️','🌧️','🌨️','🌩️','🌪️','🌬️','🌈','☔','⚡','❄️','☃️','🔥','💧','🌊','💻','💡','🎯','💼','🛠️','🎨','🧠','🌐','📊','🛡️','⚙️','💰','📱','🕹️','🏆','💎','⭐','✨','🔐','🔑','🏷️','🔔','📢','💬','💭','✉️','📦','🎁'].map(emoji => (
+                          <button key={emoji} onClick={() => { setNewWsIcon(emoji); setShowNewIconPicker(false); }} className="w-10 h-10 flex items-center justify-center text-2xl rounded-xl hover:bg-violet-500/20 transition-all hover:scale-110 shrink-0">{emoji}</button>
+                        ))}
                       </div>
                     </div>
-                    <div className="absolute inset-0 bg-gradient-to-t from-violet-900/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"/>
-                  </div>
-                ))}
+                  </>
+                )}
               </div>
-            )}
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-2 block">Workspace Name</label>
+              <input type="text" value={newWsName} onChange={(e) => setNewWsName(e.target.value)} placeholder="e.g. My Awesome Project" className="w-full bg-[#060609] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-violet-500 transition-colors" />
+            </div>
+          </div>
+          <div className="p-6 border-t border-white/5 bg-[#060609] flex gap-3">
+            <button onClick={() => setShowCreateWorkspace(false)} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 hover:bg-white/10 transition-colors">Cancel</button>
+            <button 
+              disabled={submitting}
+              onClick={handleCreateWorkspace} 
+              className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-500 text-white shadow-lg transition-all disabled:opacity-50"
+            >
+              {submitting ? 'Creating...' : 'Create'}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 2. WORKSPACE SETTINGS MODAL */}
+      <Dialog open={showWorkspaceSettings} onOpenChange={(open) => { setShowWorkspaceSettings(open); if(!open) setShowIconPicker(false); }}>
+        <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-3xl !max-w-[700px] w-[90vw] p-0 text-white shadow-2xl flex flex-col [&>button]:hidden">
+          <div className="px-8 py-5 border-b border-white/5 bg-[#060609] flex justify-between items-center shrink-0">
+            <div>
+              <DialogTitle className="text-lg font-bold">Workspace Settings</DialogTitle>
+              <p className="text-xs text-slate-400 mt-1">Manage '{activeWorkspace.name}' preferences.</p>
+            </div>
+            <button onClick={() => setShowWorkspaceSettings(false)} className="p-2 hover:bg-white/10 rounded-xl transition-colors outline-none">
+              <XCircle className="w-5 h-5 text-slate-400" />
+            </button>
+          </div>
+
+          <div className="p-8">
+            <div className="flex items-start gap-8">
+              {/* Sol: İkon Seçimi */}
+              <div className="relative shrink-0 flex flex-col items-center">
+                <button onClick={() => setShowIconPicker(!showIconPicker)} className="w-28 h-28 rounded-3xl bg-gradient-to-br from-violet-600/10 to-indigo-600/10 border-2 border-violet-500/20 flex items-center justify-center text-6xl shadow-xl hover:border-violet-500/50 hover:scale-105 transition-all group relative z-50">
+                  {selectedWorkspaceIcon}
+                  <div className="absolute inset-0 bg-black/40 rounded-3xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><Camera size={24} className="text-white" /></div>
+                </button>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-4">Change Icon</p>
+
+                {/* İKON SEÇİCİ VE GÖRÜNMEZ KAPATMA ALANI */}
+                {showIconPicker && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowIconPicker(false)} />
+                    <div className="absolute top-32 left-0 z-50 w-[360px] p-4 bg-[#16161E] border border-white/10 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] animate-in zoom-in-95">
+                      <div className="grid grid-cols-7 gap-2 max-h-[240px] overflow-y-auto overflow-x-hidden pr-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/20">
+                        {['😀','😂','🥰','😎','🤓','🤔','🤫','🤯','🥳','🥶','😈','👻','👽','🤖','💩','😺','🙈','🐶','🦊','🐱','🦁','🐯','🦄','🦓','🐷','🐘','🐭','🐰','🐻','🐼','🐾','🐦','🐧','🦅','🦆','🦉','🐸','🐢','🐍','🐳','🐬','🐟','🐙','🦋','🐛','🐝','🐞','🕷️','💐','🌸','🌹','🌺','🌻','🌼','🌷','🌱','🌲','🌴','🌵','🌿','🍁','🍂','🍇','🍉','🍊','🍋','🍌','🍍','🍎','🍏','🍒','🍓','🥝','🍅','🥑','🍆','🥔','🥕','🌽','🌶️','🥦','🍄','🍞','🥐','🥖','🥨','🧀','🍖','🍗','🥩','🥓','🍔','🍟','🍕','🌭','🥪','🌮','🌯','🥚','🍳','🥗','🍿','🍱','🍘','🍙','🍚','🍜','🍝','🍠','🍣','🍤','🍦','🍧','🍨','🍩','🍪','🎂','🍰','🍫','🍬','🍭','🍯','🍼','🥛','☕','🍵','🍶','🍾','🍷','🍸','🍹','🍺','🍻','🥂','🥃','🌍','🗺️','🏔️','🌋','🏕️','🏖️','🏝️','🏟️','🏛️','🏗️','🏠','🏡','🏢','🏥','🏦','🏨','🏫','🏭','🏰','⛩️','⛲','⛺','🌃','🏙️','🌄','🌅','🌆','🌇','🌉','🎠','🎡','🎢','🚂','🚄','🚆','🚇','🚋','🚌','🚑','🚒','🚓','🚕','🚗','🚜','🏎️','🏍️','🚲','🛴','🛣️','🛤️','⛽','🚨','🚥','🛑','⚓','⛵','🚤','🛳️','⛴️','✈️','🛩️','🛫','🛬','🚁','🚀','🛸','🌟','🌠','☁️','⛅','⛈️','🌤️','🌥️','🌦️','🌧️','🌨️','🌩️','🌪️','🌬️','🌈','☔','⚡','❄️','☃️','🔥','💧','🌊','💻','💡','🎯','💼','🛠️','🎨','🧠','🌐','📊','🛡️','⚙️','💰','📱','🕹️','🏆','💎','⭐','✨','🔐','🔑','🏷️','🔔','📢','💬','💭','✉️','📦','🎁'].map(emoji => (
+                          <button key={emoji} onClick={() => { setSelectedWorkspaceIcon(emoji); setShowIconPicker(false); }} className="w-10 h-10 flex items-center justify-center text-2xl rounded-xl hover:bg-violet-500/20 transition-all hover:scale-110 shrink-0">{emoji}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Sağ: İsim ve URL */}
+              <div className="flex-1 space-y-5">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-2 block">Workspace Name</label>
+                  <input type="text" value={editWsName} onChange={(e) => setEditWsName(e.target.value)} className="w-full bg-[#060609] border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white focus:outline-none focus:border-violet-500 transition-colors shadow-inner font-medium" />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-2 block">Workspace URL</label>
+                  <div className="flex items-center">
+                    <span className="bg-white/5 border border-white/10 border-r-0 rounded-l-2xl px-4 py-3.5 text-sm text-slate-500 select-none">prompax.com/</span>
+                    <input type="text" value={editWsName.toLowerCase().replace(/[^a-z0-9]/g, '-')} readOnly className="w-full bg-[#060609] border border-white/10 rounded-r-2xl px-4 py-3.5 text-sm text-slate-400 shadow-inner outline-none" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-8 py-5 border-t border-white/5 bg-[#060609] flex justify-end gap-3 shrink-0">
+            <button onClick={() => setShowWorkspaceSettings(false)} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Discard</button>
+            <button 
+              disabled={submitting}
+              onClick={handleUpdateWorkspace} 
+              className="px-8 py-2.5 rounded-xl text-sm font-black bg-violet-600 hover:bg-violet-500 text-white shadow-[0_10px_20px_-5px_rgba(139,92,246,0.4)] transition-all active:scale-95 disabled:opacity-50"
+            >
+              {submitting ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 3. DELETE WORKSPACE MODAL */}
+      <Dialog open={showDeleteWorkspace} onOpenChange={setShowDeleteWorkspace}>
+        <DialogContent className="bg-[#0A0A0F] border-red-500/30 rounded-3xl w-full max-w-md p-6 text-white shadow-[0_0_40px_-10px_rgba(239,68,68,0.2)]">
+          <DialogTitle className="text-xl font-bold text-red-400 mb-2">Delete Workspace?</DialogTitle>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-400 leading-relaxed">
+              This action is <strong className="text-white">permanent</strong>. All your data in <span className="text-white font-bold">{activeWorkspace.name}</span> will be deleted forever.
+            </p>
+            <div className="flex gap-3 pt-4">
+              <button onClick={() => setShowDeleteWorkspace(false)} className="flex-1 px-4 py-3 rounded-xl text-sm font-medium bg-white/5 hover:bg-white/10 transition-colors">Cancel</button>
+              <button 
+                disabled={submitting}
+                onClick={handleDeleteWorkspace} 
+                className="flex-1 px-4 py-3 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-500 text-white shadow-lg transition-all disabled:opacity-50"
+              >
+                {submitting ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
