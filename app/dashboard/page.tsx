@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import SettingsView from "@/components/SettingsView"
 import OpenAI from 'openai';
 
 // ============================================================================
@@ -437,6 +438,7 @@ export default function Dashboard() {
   // MODAL DURUMLARI (MODAL VISIBILITY)
   // -----------------------------------------------------
   const [showAddPrompt, setShowAddPrompt] = useState(false)
+  const [showSettings, setShowSettings] = useState(false);
   const [showAddCollection, setShowAddCollection] = useState(false)
   const [showAddOutput, setShowAddOutput] = useState(false)
   const [viewingOutput, setViewingOutput] = useState<Output | null>(null)
@@ -2352,13 +2354,16 @@ const handleMagicPaste = async () => {
             
           {/* Settings butonu */}
           {!isCollapsed && (
-            <button className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all">
-              <Settings className="w-4 h-4 shrink-0" />
-              <span>Settings</span>
-              <ChevronRight className="w-4 h-4 ml-auto" />
-            </button>
-          )}
-      </aside>
+          <button 
+          onClick={() => setShowSettings(true)} // <-- Burayı ekledik
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-[13px] font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all outline-none"
+          >
+          <Settings className="w-4 h-4 shrink-0" />
+          <span>Settings</span>
+          <ChevronRight className="w-4 h-4 ml-auto" />
+          </button>
+        )}
+        </aside>
 
       {/* ============================================================================ */}
       {/* 7. MAIN CONTENT AREA                                                         */}
@@ -4654,6 +4659,22 @@ const handleMagicPaste = async () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* SETTINGS MODAL */}
+    <Dialog open={showSettings} onOpenChange={setShowSettings}>
+      <DialogContent aria-describedby={undefined} className="bg-[#0A0A0F] border-white/10 rounded-[32px] sm:max-w-[90vw] lg:max-w-[1100px] p-0 overflow-hidden shadow-2xl [&>button]:hidden">
+        
+        {/* RADIX UI'I SUSTURMAK İÇİN EKLENEN GİZLİ BAŞLIK */}
+        <DialogTitle className="sr-only">Platform Settings</DialogTitle>
+        
+        <SettingsView 
+          user={user} 
+          supabase={supabase} 
+          onClose={() => setShowSettings(false)} 
+          onUpdateUser={() => window.location.reload()}
+        />
+      </DialogContent>
+    </Dialog>
 
       <Dialog open={showAddCollection} onOpenChange={setShowAddCollection}>
         <DialogContent className="bg-[#111118] border-white/10 rounded-3xl w-full max-w-md shadow-2xl p-0 gap-0 text-white [&>button]:hidden">
