@@ -11,7 +11,8 @@ import {
   ChevronDown, Library, Mail, MessageCircle, Code2, FileText, Lightbulb,
   Workflow, Play, ExternalLink, ArrowRight, GripVertical, CheckCircle, 
   ArrowDown, Save, FastForward, Pin, Layers, Database, MousePointerClick, Edit3,
-  Undo2, FileDown, FolderOpen, User, CreditCard, LogOut
+  Undo2, FileDown, FolderOpen, User, CreditCard, LogOut, AlertTriangle, Moon, Command,
+  Key 
 } from 'lucide-react'
 
 // ============================================================================
@@ -30,6 +31,24 @@ import OpenAI from 'openai';
 // ============================================================================
 // Profesyonel ve ince kaydırma çubuğu (Scrollbar) sınıfları. Amatör görünümü engeller.
 const scrollbarClasses = "[&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 hover:[&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors"
+
+// import'ların hemen altına ekle:
+const MenuItems = ({ items }: { items: any[] }) => {
+  return (
+    <>
+      {items.map((item, index) => {
+        // Platform objesi geliyorsa item.value, direkt string geliyorsa item kullanır
+        const value = item.value || item;
+        const label = item.label || item;
+        return (
+          <SelectItem key={index} value={value} className="cursor-pointer">
+            {label}
+          </SelectItem>
+        );
+      })}
+    </>
+  );
+};
 
 // ============================================================================
 // 3. TİP TANIMLAMALARI (TYPES & INTERFACES)
@@ -335,7 +354,7 @@ export default function Dashboard() {
   const [prompts, setPrompts] = useState<Prompt[]>([])
   const [collections, setCollections] = useState<Collection[]>([])
   const [outputs, setOutputs] = useState<Output[]>([])
-  const [workflows, setWorkflows] = useState<AppWorkflow[]>(initialWorkflowsData)
+  const [workflows, setWorkflows] = useState<AppWorkflow[]>(initialWorkflowsData);
   
   const [loading, setLoading] = useState(true)
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -392,7 +411,17 @@ export default function Dashboard() {
           .eq('workspace_id', activeWsId)
           .order('created_at', { ascending: false });
         
-        if (!promptsError && promptsData) setPrompts(promptsData);
+        if (!promptsError && promptsData) {
+          const normalized = promptsData.map((p: any) => ({
+            ...p,
+            platforms: Array.isArray(p.platforms) && p.platforms.length > 0
+              ? p.platforms 
+              : typeof p.platform === 'string' && p.platform
+                ? [p.platform] 
+                : ['chatgpt']
+          }))
+          setPrompts(normalized)
+        }
 
         // 2. Sadece aktif Workspace'e ait Koleksiyonları çek
         const { data: collectionsData, error: collectionsError } = await supabase
@@ -439,6 +468,12 @@ export default function Dashboard() {
   // -----------------------------------------------------
   const [showAddPrompt, setShowAddPrompt] = useState(false)
   const [showSettings, setShowSettings] = useState(false);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [newEmail, setNewEmail] = useState(user?.email || '');
+  const [newPassword, setNewPassword] = useState('');
+  const [feedbackText, setFeedbackText] = useState('');
+
   const [showAddCollection, setShowAddCollection] = useState(false)
   const [showAddOutput, setShowAddOutput] = useState(false)
   const [viewingOutput, setViewingOutput] = useState<Output | null>(null)
@@ -464,6 +499,8 @@ export default function Dashboard() {
   
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [shareCopied, setShareCopied] = useState(false)
+  const [sharingCollectionId, setSharingCollectionId] = useState<string | null>(null)
+  const [shareModalCollection, setShareModalCollection] = useState<Collection | null>(null)
   
   // Ana Arama Stateleri
   const [searchQuery, setSearchQuery] = useState('')
@@ -530,6 +567,41 @@ export default function Dashboard() {
   
   const [workflowStatus, setWorkflowStatus] = useState<'idle' | 'running' | 'completed'>('idle')
 
+  // BİLDİRİM STATE'LERİ
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+
+  // Sayfa yüklendiğinde bildirimleri çek
+  useEffect(() => {
+    async function fetchNotifications() {
+      if (!user?.id) return;
+      const { data } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (data) setNotifications(data);
+    }
+    fetchNotifications();
+  }, [user?.id, supabase]);
+
+  // Tümünü okundu işaretle
+  const markAllAsRead = async () => {
+    if (unreadCount === 0) return;
+    
+    // Supabase'de güncelle
+    await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', user?.id)
+      .eq('is_read', false);
+      
+    // Ekranda (State) anında güncelle
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+  };
+
   // ============================================================================
   // MEMOIZED VERİLER (PERFORMANCE OPTIMIZATION)
   // ============================================================================
@@ -544,8 +616,9 @@ export default function Dashboard() {
   }, [prompts, outputs])
 
   const activeOutputs = useMemo(() => {
-    return outputs.filter(o => !o.deleted_at)
-  }, [outputs])
+  // Eğer outputs null veya undefined ise boş dizi döndür, değilse filtrele
+  return (outputs || []).filter(o => !o.deleted_at);
+}, [outputs]);
   
   const filteredLinkPrompts = useMemo(() => {
     if (!promptSearchQuery) return activePrompts
@@ -960,12 +1033,45 @@ const handleMagicPaste = async () => {
 };
 
 // OPTİMİZE EDİLMİŞ PROMPTU KABUL ETME
-  const acceptOptimization = () => {
-    if (optimizeResult?.improved_prompt) {
-      // Editor'deki mevcut metni AI'ın yazdığı ile değiştir
+  const acceptOptimization = async () => {
+    if (optimizeResult?.improved_prompt && editingPrompt) {
+      // 1. Mevcut içeriği version history'e kaydet
+      const newVersionNum = promptVersions.length + 1
+      
+      try {
+        const { data, error } = await supabase
+          .from('versions')
+          .insert([{
+            prompt_id: editingPrompt.id,
+            content: form.content, // Eski içeriği kaydet
+            version_num: newVersionNum,
+            user_id: user?.id
+          }])
+          .select()
+
+        if (!error && data) {
+          setPromptVersions(prev => [...prev, {
+            id: data[0].id,
+            prompt_id: editingPrompt.id,
+            content: form.content,
+            version_num: newVersionNum,
+            created_at: data[0].created_at,
+            deleted_at: null
+          }])
+        }
+      } catch (err) {
+        console.warn("Version save error:", err)
+      }
+
+      // 2. Editördeki içeriği AI versiyonuyla değiştir
       setForm(prev => ({ ...prev, content: optimizeResult.improved_prompt }));
       setShowOptimizeModal(false);
-      setOptimizeResult(null); // Temizle
+      setOptimizeResult(null);
+    } else if (optimizeResult?.improved_prompt) {
+      // editingPrompt yoksa sadece içeriği değiştir
+      setForm(prev => ({ ...prev, content: optimizeResult.improved_prompt }));
+      setShowOptimizeModal(false);
+      setOptimizeResult(null);
     }
   };
 
@@ -1028,10 +1134,11 @@ const handleMagicPaste = async () => {
 
     try {
       if (type === 'version') {
-         // Versiyonlar için direkt kalıcı silme yapıyoruz (Çünkü veritabanında versiyon çöp kutusu yok)
          const { error } = await supabase.from('versions').delete().eq('id', id);
-         if (error) throw error;
-         
+         if (error) {
+           // Veritabanında yoksa sadece local state'den sil
+           console.warn("Version delete error, removing from local state:", error);
+         }
          setPromptVersions(prev => prev.filter(v => v.id !== id));
       } else {
          // Prompt ve Output için Soft Delete (Çöp kutusuna atma - deleted_at güncellenir)
@@ -1157,6 +1264,31 @@ const handleMagicPaste = async () => {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleToggleCollectionPublic = async (collection: Collection) => {
+    try {
+      const newStatus = !collection.is_public
+      const { error } = await supabase
+        .from('collections')
+        .update({ is_public: newStatus })
+        .eq('id', collection.id)
+
+      if (error) throw error
+
+      setCollections(prev => prev.map(c => 
+        c.id === collection.id ? { ...c, is_public: newStatus } : c
+      ))
+    } catch (err: any) {
+      alert(err.message || 'Error updating collection')
+    }
+  }
+
+  const handleCopyShareLink = (collectionId: string) => {
+    const link = `${window.location.origin}/share/${collectionId}`
+    navigator.clipboard.writeText(link)
+    setSharingCollectionId(collectionId)
+    setTimeout(() => setSharingCollectionId(null), 2000)
   }
 
   const handleDeleteCollection = async (collectionId: string) => {
@@ -2106,6 +2238,43 @@ const handleMagicPaste = async () => {
   const activeVersionId = currentStep ? activeVersionIds[currentStep.id] : null
   const activeVersion = currentVersions.find(v => v.id === activeVersionId)
 
+  // Supabase E-posta Güncelleme Fonksiyonu
+  const handleUpdateEmail = async () => {
+    if (!newEmail || newEmail === user?.email) {
+      alert("Lütfen mevcut e-postanızdan farklı geçerli bir adres girin.");
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ email: newEmail });
+    if (error) {
+      alert("E-posta güncellenirken bir hata oluştu: " + error.message);
+    } else {
+      alert("E-posta adresi güncelleme isteği gönderildi! Lütfen hem eski hem de yeni e-posta adresinize gelen doğrulama linklerini onaylayın.");
+    }
+  };
+
+  // Supabase Şifre Değiştirme Fonksiyonu
+  const handleChangePassword = async () => {
+    if (!newPassword || newPassword.length < 6) {
+      alert("Yeni şifreniz güvenlik nedeniyle en az 6 karakter olmalıdır.");
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      alert("Şifre değiştirilirken bir hata oluştu: " + error.message);
+    } else {
+      alert("Şifreniz başarıyla güncellendi!");
+      setNewPassword('');
+    }
+  };
+
+  // Geri Bildirim (Feedback) Fonksiyonu (Şimdilik mailto tetikler, ileride tabloya bağlanabilir)
+  const handleFeedbackSubmit = () => {
+    if (!feedbackText.trim()) return;
+    window.location.href = `mailto:support@prompax.com?subject=Prompax User Feedback&body=${encodeURIComponent(feedbackText)}`;
+    setShowFeedback(false);
+    setFeedbackText('');
+  };
+
   return (
     <div className="min-h-screen bg-[#060609] text-slate-200 font-sans selection:bg-violet-500/30 flex overflow-hidden">
       
@@ -2280,7 +2449,16 @@ const handleMagicPaste = async () => {
                   </h3>
                   <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${expandedSections.collections ? '' : '-rotate-90'}`} />
                 </div>
-                <button onClick={() => { setShowAddCollection(true); setError(''); setEditingCollection(null); setCollectionForm({name: '', description: ''}) }} className="text-slate-400 hover:text-violet-400 transition-colors outline-none">
+                <button 
+                  onClick={(e) => { 
+                    e.stopPropagation()
+                    setShowAddCollection(true)
+                    setError('')
+                    setEditingCollection(null)
+                    setCollectionForm({name: '', description: ''})
+                  }} 
+                  className="text-slate-400 hover:text-violet-400 transition-colors outline-none p-1"
+                >
                   <Plus className="w-4 h-4" />
                 </button>
               </div>
@@ -2306,10 +2484,22 @@ const handleMagicPaste = async () => {
                         <MoreVertical className="w-3.5 h-3.5" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-36 bg-[#1A1A28] border-white/10 text-slate-200 rounded-xl shadow-2xl p-1">
+                    <DropdownMenuContent align="end" className="w-48 bg-[#1A1A28] border-white/10 text-slate-200 rounded-xl shadow-2xl p-1">
                       <DropdownMenuItem onClick={() => { setEditingCollection(col); setCollectionForm({name: col.name, description: col.description}); setShowAddCollection(true); }} className="gap-2.5 cursor-pointer hover:bg-white/10 py-2 text-[12px] font-medium">
                         <Edit2 className="w-3.5 h-3.5 text-slate-400" /> Rename
                       </DropdownMenuItem>
+                      <DropdownMenuSeparator className="bg-white/5 my-1" />
+                      <DropdownMenuItem onClick={() => handleToggleCollectionPublic(col)} className="gap-2.5 cursor-pointer hover:bg-white/10 py-2 text-[12px] font-medium">
+                        {col.is_public 
+                          ? <><ShieldAlert className="w-3.5 h-3.5 text-amber-400" /> Make Private</>
+                          : <><Share2 className="w-3.5 h-3.5 text-green-400" /> Make Public</>
+                        }
+                      </DropdownMenuItem>
+                      {col.is_public && (
+                        <DropdownMenuItem onClick={() => { setShareModalCollection(col) }} className="gap-2.5 cursor-pointer hover:bg-white/10 py-2 text-[12px] font-medium text-violet-400">
+                          <ExternalLink className="w-3.5 h-3.5" /> Share Link
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuSeparator className="bg-white/5 my-1" />
                       <DropdownMenuItem onClick={() => { if(window.confirm("Delete this collection?")) setCollections(prev => prev.filter(c=>c.id!==col.id)) }} className="gap-2.5 cursor-pointer text-red-400 focus:text-red-400 hover:bg-red-500/10 py-2 text-[12px] font-medium">
                         <Trash2 className="w-3.5 h-3.5" /> Delete
@@ -2368,262 +2558,294 @@ const handleMagicPaste = async () => {
       {/* ============================================================================ */}
       {/* 7. MAIN CONTENT AREA                                                         */}
       {/* ============================================================================ */}
-      <main className="flex-1 flex flex-col relative h-screen overflow-hidden">
+      <main className="flex-1 flex flex-col relative h-screen overflow-hidden bg-[#060609]">
         
-        {/* HEADER */}
-        <header className="sticky top-0 z-10 bg-[#060609]/80 backdrop-blur-xl border-b border-white/5 px-10 py-4 flex items-center justify-between shrink-0 gap-6">
-          
-          {/* BAŞLIK */}
-          {activeView !== 'dashboard' && (
-          <h1 className="text-[20px] font-bold text-white tracking-tight shrink-0">
-            {activeView === 'workflow-execution' ? 'Workflow Execution Engine' :
-             activeView === 'unified-prompt' ? 'Unified Master Prompt Generator' :
-             searchResults !== null ? 'Search Results' :
-             activeView === 'workflows' ? 'Automated Workflows' :
-             activeView === 'outputs' ? 'Saved Outputs' :
-             activeView === 'trash' ? 'Trash' :
-             activeView === 'collection' ? collections.find(c => c.id === activeCollection)?.name : 'All Prompts'}
-          </h1>
-          )}
-
-          {/* ARAMA */}
-          {(activeView !== 'analytics' && activeView !== 'workflow-execution' && activeView !== 'unified-prompt') && (
-            <div className="flex-1 max-w-xl relative group">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-violet-400 transition-colors z-10" />
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search prompts, workflows, outputs..."
-                className="w-full bg-[#0A0A0F]/90 border border-white/10 rounded-xl pl-11 pr-4 py-2.5 text-[14px] text-white placeholder-slate-500 focus-visible:ring-1 focus-visible:ring-violet-500/50 hover:border-white/20 transition-all"
-              />
-              {isSearching && (
-                <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                  <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* SAĞ: Çan + Profil */}
-          <div className="flex items-center gap-3 shrink-0">
+{/* ============================================================================ */}
+        {/* HEADER (Sabit, Kusursuz Hizalanmış)                                          */}
+        {/* ============================================================================ */}
+        <header className="sticky top-0 z-10 bg-[#060609]/80 backdrop-blur-xl border-b border-white/5 py-4 shrink-0 w-full">
+          {/* İÇ HİZALAMA KUTUSU: Arama çubuğu ve profilin, alttaki dashboard ile aynı hizada kalmasını sağlar */}
+          <div className="w-full max-w-[1400px] mx-auto px-8 lg:px-10 flex items-center justify-between gap-6">
             
-            {/* === DİNAMİK AKSİYON BUTONLARI === */}
-            {activeView === 'all' && (
-              <button onClick={() => setShowAddPrompt(true)} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(139,92,246,0.4)]">
-                <Plus className="w-4 h-4" /> New Prompt
-              </button>
+            {/* DİNAMİK BAŞLIK (Dashboard hariç ekranlarda gösterilir) */}
+            {activeView !== 'dashboard' && (
+              <h1 className="text-[20px] font-bold text-white tracking-tight shrink-0">
+                {activeView === 'workflow-execution' ? 'Workflow Execution Engine' :
+                 activeView === 'unified-prompt' ? 'Unified Master Prompt Generator' :
+                 searchResults !== null ? 'Search Results' :
+                 activeView === 'workflows' ? 'Automated Workflows' :
+                 activeView === 'outputs' ? 'Saved Outputs' :
+                 activeView === 'trash' ? 'Trash' :
+                 activeView === 'collection' ? collections.find(c => c.id === activeCollection)?.name : 'All Prompts'}
+              </h1>
             )}
 
-            {activeView === 'workflows' && (
-              <button onClick={() => { 
-                setWorkflowForm({ 
-                  id: `wf-${Date.now()}`, 
-                  title: 'New Workflow', 
-                  description: '', 
-                  steps: [],
-                  created_at: new Date().toISOString()
-                }); 
-                setShowWorkflowBuilder(true); 
-              }} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(99,102,241,0.4)]">
-                <Plus className="w-4 h-4" /> Create Workflow
-              </button>
+            {/* ARAMA ÇUBUĞU */}
+            {(activeView !== 'analytics' && activeView !== 'workflow-execution' && activeView !== 'unified-prompt') && (
+              <div className="flex-1 max-w-xl relative group">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-violet-400 transition-colors z-10" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search prompts, workflows, outputs..."
+                  className="w-full bg-[#0A0A0F]/90 border border-white/10 rounded-xl pl-11 pr-4 py-2.5 text-[14px] text-white placeholder-slate-500 focus-visible:ring-1 focus-visible:ring-violet-500/50 hover:border-white/20 transition-all"
+                />
+                {isSearching && (
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                    <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
+                  </div>
+                )}
+              </div>
             )}
 
-            {activeView === 'outputs' && (
-              <button onClick={() => setShowAddOutput(true)} className="flex items-center gap-2 bg-pink-600 hover:bg-pink-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(236,72,153,0.4)]">
-                <Plus className="w-4 h-4" /> Save Output
-              </button>
-            )}
+            {/* SAĞ: BUTONLAR, ÇAN + PROFİL */}
+            <div className="flex items-center gap-3 shrink-0 ml-auto">
+              {activeView === 'all' && (
+                <button onClick={() => setShowAddPrompt(true)} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(139,92,246,0.4)]">
+                  <Plus className="w-4 h-4" /> New Prompt
+                </button>
+              )}
 
-            {/* BİLDİRİMLER (ÇAN) */}
+              {activeView === 'workflows' && (
+                <button onClick={() => { 
+                  setWorkflowForm({ id: `wf-${Date.now()}`, title: 'New Workflow', description: '', steps: [], created_at: new Date().toISOString() }); 
+                  setShowWorkflowBuilder(true); 
+                }} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(99,102,241,0.4)]">
+                  <Plus className="w-4 h-4" /> Create Workflow
+                </button>
+              )}
+
+              {activeView === 'outputs' && (
+                <button onClick={() => setShowAddOutput(true)} className="flex items-center gap-2 bg-pink-600 hover:bg-pink-500 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(236,72,153,0.4)]">
+                  <Plus className="w-4 h-4" /> Save Output
+                </button>
+              )}
+
+              {/* ============================================================================ */}
+            {/* BİLDİRİM ÇANI (Gelişmiş)                                                     */}
+            {/* ============================================================================ */}
             <DropdownMenu>
               <DropdownMenuTrigger className="relative w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all border border-white/5 outline-none">
                 <Bell className="w-5 h-5" />
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-violet-500 rounded-full text-[10px] font-black text-white flex items-center justify-center">2</span>
+                {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-pink-500 rounded-full text-[10px] font-black text-white flex items-center justify-center shadow-[0_0_10px_rgba(236,72,153,0.5)] animate-pulse">{unreadCount}</span>}
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80 bg-[#0A0A0F] border-white/10 p-0 rounded-2xl shadow-2xl">
-                <div className="p-4 border-b border-white/5 flex justify-between items-center">
-                  <h3 className="text-sm font-bold text-slate-200">Notifications</h3>
-                  <span className="text-[10px] text-violet-400 cursor-pointer hover:underline">Mark all as read</span>
+              <DropdownMenuContent align="end" className="w-[340px] bg-[#0A0A0F] border-white/10 p-0 rounded-2xl shadow-2xl overflow-hidden">
+                <div className="p-4 border-b border-white/5 flex justify-between items-center bg-[#060609]">
+                  <h3 className="text-[14px] font-bold text-slate-200">Notifications</h3>
+                  {unreadCount > 0 && <button onClick={markAllAsRead} className="text-[11px] font-bold text-violet-400 hover:text-violet-300 transition-colors">Mark all as read</button>}
                 </div>
-                <div className="p-2 flex flex-col">
-                   <div className="flex gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer transition-colors">
-                     <div className="mt-0.5"><Sparkles size={16} className="text-violet-400"/></div>
-                     <div>
-                       <p className="text-sm font-medium text-slate-200">Workflow Completed</p>
-                       <p className="text-xs text-slate-500 mt-1">Your 'SaaS Launch' workflow has successfully generated 4 outputs.</p>
-                       <p className="text-[10px] text-slate-600 mt-2">10 mins ago</p>
-                     </div>
-                   </div>
-                   <div className="flex gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer transition-colors">
-                     <div className="mt-0.5"><Wand2 size={16} className="text-blue-400"/></div>
-                     <div>
-                       <p className="text-sm font-medium text-slate-200">AI Optimization Ready</p>
-                       <p className="text-xs text-slate-500 mt-1">We found a way to make your 'Cold Email' prompt 20% more effective.</p>
-                       <p className="text-[10px] text-slate-600 mt-2">2 hours ago</p>
-                     </div>
-                   </div>
+                
+                <div className="max-h-[350px] overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 hover:[&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors">
+                  {notifications.length === 0 ? (
+                    <div className="p-10 text-center flex flex-col items-center justify-center">
+                      <div className="w-14 h-14 bg-green-500/10 rounded-full flex items-center justify-center mb-4 border border-green-500/20">
+                        <CheckCircle2 className="w-7 h-7 text-green-400" />
+                      </div>
+                      <p className="text-slate-200 font-bold text-[15px]">You're all caught up! 🎉</p>
+                      <p className="text-slate-500 text-[13px] mt-1.5">No new notifications right now.</p>
+                    </div>
+                  ) : (
+                    notifications.map((notif) => {
+                      let Icon = Bell;
+                      let colorClass = "text-violet-400 bg-violet-500/10 border-violet-500/20";
+                      
+                      if (notif.type === 'ai') { Icon = Sparkles; colorClass = "text-orange-400 bg-orange-500/10 border-orange-500/20"; }
+                      else if (notif.type === 'warning') { Icon = AlertTriangle; colorClass = "text-amber-400 bg-amber-500/10 border-amber-500/20"; }
+                      else if (notif.type === 'success') { Icon = CheckCircle2; colorClass = "text-green-400 bg-green-500/10 border-green-500/20"; }
+
+                      return (
+                        <div key={notif.id} className={`flex gap-3.5 p-4 hover:bg-white/5 cursor-pointer transition-colors border-b border-white/5 last:border-0 relative ${notif.is_read ? 'opacity-60' : 'bg-white/[0.02]'}`}>
+                          {!notif.is_read && <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-pink-500 rounded-full shadow-[0_0_8px_rgba(236,72,153,0.8)]"></div>}
+                          <div className={`mt-0.5 w-9 h-9 rounded-full flex items-center justify-center shrink-0 border ${colorClass}`}>
+                            <Icon size={15} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-[13px] font-medium leading-snug ${notif.is_read ? 'text-slate-400' : 'text-slate-200'}`}>{notif.title}</p>
+                            <p className="text-[11.5px] text-slate-500 mt-1 line-clamp-2 leading-relaxed">{notif.message}</p>
+                            <span className="text-[10px] text-slate-600 font-medium mt-2 block">2 hours ago</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
+
+                {notifications.length > 0 && (
+                  <div className="p-2 border-t border-white/5 bg-[#060609]">
+                    <button className="w-full py-2.5 text-center text-[12px] font-bold text-slate-400 hover:text-white transition-colors rounded-xl hover:bg-white/5">
+                      View all notifications
+                    </button>
+                  </div>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* KULLANICI PROFİLİ */}
+            {/* ============================================================================ */}
+            {/* PROFİL MENÜSÜ (Gelişmiş Profil & Kimlik Ayarları)                            */}
+            {/* ============================================================================ */}
             <DropdownMenu>
               <DropdownMenuTrigger className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5 transition-colors cursor-pointer border border-white/5 outline-none">
                 {user?.user_metadata?.avatar_url ? (
-                  <img src={user.user_metadata.avatar_url} className="w-8 h-8 rounded-full shrink-0" alt="Avatar" />
+                  <img src={user.user_metadata.avatar_url} className="w-8 h-8 rounded-full shrink-0 object-cover" alt="Avatar" />
                 ) : (
                   <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-300 text-[12px] font-semibold shrink-0">
                     {user?.email?.[0]?.toUpperCase()}
                   </div>
                 )}
                 <div className="hidden md:block text-left">
-                  <p className="text-[13px] font-medium text-slate-200">{user?.user_metadata?.full_name || 'Tolga Öztürk'}</p>
-                  <p className="text-[11px] text-slate-500">Free Plan</p>
+                  <p className="text-[13px] font-medium text-slate-200">{user?.user_metadata?.full_name || 'User'}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                    <p className="text-[11px] text-slate-400 font-medium">Free Plan</p>
+                  </div>
                 </div>
-                <ChevronDown className="w-4 h-4 text-slate-500" />
+                <ChevronDown className="w-4 h-4 text-slate-500 ml-1" />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 bg-[#0A0A0F] border-white/10 rounded-xl shadow-2xl p-1">
-                <div className="px-3 py-3 border-b border-white/5 mb-1">
-                  <p className="text-sm font-medium text-slate-200">{user?.user_metadata?.full_name || 'Tolga Öztürk'}</p>
-                  <p className="text-xs text-slate-500 truncate">{user?.email || 'tolga@prompax.com'}</p>
-                  <button className="mt-3 w-full py-1.5 rounded-lg text-[11px] font-bold bg-violet-500 hover:bg-violet-400 text-white transition-colors">
-                    Upgrade to PRO
+              
+              <DropdownMenuContent align="end" className="w-64 bg-[#0A0A0F] border-white/10 rounded-2xl shadow-2xl p-1">
+                
+                {/* 1. ÜST KISIM: KULLANICI ÖZET KARTI (İstatistik Kutusu Kaldırıldı) */}
+                <div className="p-4 border-b border-white/5 mb-1 bg-[#060609] rounded-t-xl flex flex-col items-center text-center">
+                  {user?.user_metadata?.avatar_url ? (
+                    <img src={user.user_metadata.avatar_url} className="w-12 h-12 rounded-full mb-2.5 ring-2 ring-violet-500/30 object-cover" alt="Avatar" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white text-[16px] font-bold mb-2.5 shadow-lg">
+                      {user?.email?.[0]?.toUpperCase()}
+                    </div>
+                  )}
+                  <p className="text-[14px] font-bold text-white tracking-tight">{user?.user_metadata?.full_name || 'User'}</p>
+                  <p className="text-[11px] text-slate-400 mb-3 truncate w-full">{user?.email}</p>
+                  
+                  <button className="w-full py-2 rounded-xl text-[11px] font-bold bg-gradient-to-r from-violet-600 to-pink-600 hover:from-violet-500 hover:to-pink-500 text-white transition-all shadow-[0_0_15px_-3px_rgba(139,92,246,0.5)] flex items-center justify-center gap-2">
+                    <Zap className="w-3.5 h-3.5 fill-white" /> Upgrade to PRO
                   </button>
                 </div>
-                <DropdownMenuItem className="gap-2.5 text-slate-300 hover:bg-white/5 cursor-pointer py-2 text-sm rounded-lg">
-                  <User size={16} className="text-slate-400" /> My Profile
-                </DropdownMenuItem>
-                <DropdownMenuItem className="gap-2.5 text-slate-300 hover:bg-white/5 cursor-pointer py-2 text-sm rounded-lg">
-                  <CreditCard size={16} className="text-slate-400" /> Billing & Plan
-                </DropdownMenuItem>
+
+                {/* 2. ORTA KISIM: SUPABASE HESAP & KİMLİK AYARLARI */}
+                <div className="p-1 space-y-0.5">
+                  <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">Account Access</div>
+                  
+                  {/* Birleştirilmiş Profil Butonu */}
+                  <DropdownMenuItem onClick={() => setShowProfileSettings(true)} className="flex items-center gap-3 text-slate-300 hover:bg-white/5 hover:text-white cursor-pointer px-3 py-2.5 text-[13px] rounded-lg font-medium transition-colors">
+                    <User className="w-4 h-4 text-slate-400" /> Profile Settings
+                  </DropdownMenuItem>
+                </div>
+
                 <DropdownMenuSeparator className="bg-white/5 my-1" />
-                <DropdownMenuItem onClick={async () => { if(typeof supabase !== 'undefined') { await supabase.auth.signOut(); window.location.href = '/login'; } }} className="gap-2.5 text-red-400 hover:bg-red-500/10 focus:bg-red-500/10 cursor-pointer py-2 text-sm rounded-lg">
-                  <LogOut size={16} /> Log out
-                </DropdownMenuItem>
+
+                {/* 3. SİSTEM AYARLARI & GERİ BİLDİRİM */}
+                <div className="p-1 space-y-0.5">
+                  <div className="px-2.5 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">Preferences</div>
+                  
+                  {/* Genel Ayarlar */}
+                  <DropdownMenuItem onClick={() => setShowSettings(true)} className="flex items-center gap-3 text-slate-300 hover:bg-white/5 hover:text-white cursor-pointer px-3 py-2.5 text-[13px] rounded-lg font-medium transition-colors">
+                    <Settings className="w-4 h-4 text-slate-400" /> Preferences & System
+                  </DropdownMenuItem>
+
+                  {/* Submit Feedback Butonu */}
+                  <DropdownMenuItem onClick={() => setShowFeedback(true)} className="flex items-center gap-3 text-amber-400/90 hover:bg-amber-500/10 focus:bg-amber-500/10 cursor-pointer px-3 py-2.5 text-[13px] rounded-lg font-medium transition-colors">
+                    <MessageSquare className="w-4 h-4 text-amber-400" /> Submit Feedback
+                  </DropdownMenuItem>
+                </div>
+
+                <DropdownMenuSeparator className="bg-white/5 my-1" />
+                
+                {/* 4. ALT KISIM: GÜVENLİ ÇIKIŞ */}
+                <div className="p-1">
+                  <DropdownMenuItem onClick={async () => { if(typeof supabase !== 'undefined') { await supabase.auth.signOut(); window.location.href = '/login'; } }} className="flex items-center gap-3 text-red-400 hover:bg-red-500/10 focus:bg-red-500/10 cursor-pointer px-3 py-2.5 text-[13px] rounded-lg font-bold transition-colors">
+                    <LogOut className="w-4 h-4" /> Log out
+                  </DropdownMenuItem>
+                </div>
+
               </DropdownMenuContent>
             </DropdownMenu>
-            
+            </div>
           </div>
         </header>
 
-        {activeView === ('ai-optimize' as any) ? (
-            <div className="relative z-10 w-full max-w-5xl mx-auto pb-10">
-              <h2 className="text-[20px] font-bold text-white mb-8 flex items-center gap-3">
-                <Wand2 className="w-6 h-6 text-violet-400"/> AI Optimized Prompts
-              </h2>
-              {activePrompts.length === 0 ? (
-                <div className="text-center py-20 bg-[#0A0A0F]/50 border border-white/5 rounded-3xl">
-                  <Wand2 className="w-12 h-12 text-slate-600 mx-auto mb-4"/>
-                  <p className="text-slate-400 font-medium text-[16px]">No prompts yet.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {activePrompts.map((prompt) => (
-                    <div key={prompt.id} onClick={() => openWorkspace(prompt)} className="group cursor-pointer flex flex-col bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 h-[300px] hover:border-violet-500/40 transition-all shadow-xl relative">
-                      <div className="flex items-start justify-between gap-4 mb-4">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-[16px] font-bold truncate text-slate-100 group-hover:text-violet-300 transition-colors">{prompt.title}</h3>
-                          {prompt.description && <p className="text-[12px] text-slate-500 truncate mt-1">{prompt.description}</p>}
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); openWorkspace(prompt); triggerAIOptimize(); }} className="px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 rounded-lg text-[11px] font-bold border border-violet-500/20 flex items-center gap-1.5 shrink-0 transition-all">
-                          <Wand2 className="w-3.5 h-3.5"/> Optimize
-                        </button>
-                      </div>
-                      <div className="relative flex-1 overflow-hidden mb-4">
-                        <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-slate-400 font-serif">{prompt.content}</p>
-                        <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#0A0A0F] to-transparent pointer-events-none"/>
-                      </div>
-                      <div className="flex items-center gap-3 mt-auto pt-4 border-t border-white/5">
-                        <div className="flex -space-x-2">
-                          {prompt.platforms.slice(0,3).map((p) => (
-                            <span key={p} className={`w-7 h-7 rounded-full border-2 border-[#0A0A0F] flex items-center justify-center text-[9px] font-bold uppercase ${getPlatformStyle(p)}`}>
-                              {p.substring(0,1)}
-                            </span>
-                          ))}
-                        </div>
-                        <span className="text-[11px] bg-white/10 border border-white/5 px-3 py-1.5 rounded-lg text-slate-300 font-semibold">{prompt.category}</span>
-                        <button onClick={(e) => copyToClipboard(prompt.content, prompt.id, e)} className="ml-auto flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 hover:bg-violet-500/20 hover:text-violet-300 text-slate-400 transition-all border border-transparent hover:border-violet-500/30 shrink-0">
-                          {copiedId === prompt.id ? <Check className="w-5 h-5 text-green-400"/> : <Copy className="w-5 h-5"/>}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-          ) :
-
-        <div className={`flex-1 p-10 pt-6 overflow-y-auto relative ${scrollbarClasses}`}>
+        {/* ============================================================================ */}
+        {/* PROFESYONEL SCROLLBAR VE İÇERİK HİZALAMA ALANI                               */}
+        {/* ============================================================================ */}
+        {/* [SİHİRLİ DOKUNUŞ]: Tailwind ile Webkit Scrollbar gizlendi, modern ve ince yapıldı */}
+        <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 hover:[&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors">
           
-          <div className="absolute top-0 left-1/4 w-96 h-96 bg-violet-600/10 rounded-full blur-[120px] pointer-events-none" />
+          {/* MAX GENİŞLİK 1400px: Header ile birebir aynı hizada kalmasını sağlar */}
+          <div className="px-8 lg:px-10 py-8 w-full max-w-[1400px] mx-auto">
+            
+            {/* ============================================================================ */}
+            {/* VIEW: 1. DASHBOARD EKRANI                                                    */}
+            {/* ============================================================================ */}
+            {activeView === 'dashboard' ? (
+              <div className="relative z-10 w-full space-y-8 pb-10">
 
-          {/* ============================================================================ */}
-          {/* VIEW: 1. UNIFIED PROMPT GENERATOR                                            */}
-          {/* ============================================================================ */}
-          {activeView === 'dashboard' ? (
-            <div className="relative z-10 w-full max-w-[1400px] mx-auto space-y-8 pb-10">
-
-              {/* HEADER */}
-              <div>
-                <h1 className="text-[32px] font-black text-white tracking-tight">
-                  Today's Workspace 👋
-                </h1>
-                <p className="text-slate-400 mt-2 text-[15px]">
-                  Good morning, {user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! Continue where you left off.
-                </p>
-              </div>
-
-              {/* STAT CARDS */}
-              <div className="grid grid-cols-4 gap-5">
-                <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
-                  <div className="w-14 h-14 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
-                    <Workflow className="w-6 h-6 text-violet-400"/>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 text-[13px] font-medium">Workflows in Progress</p>
-                    <h3 className="text-3xl font-black text-white">{workflows.length}</h3>
-                    <p className="text-[12px] text-violet-400 mt-0.5">Active</p>
-                  </div>
+                {/* "TODAY'S WORKSPACE" BAŞLIĞI */}
+                <div>
+                  <h1 className="text-[32px] font-black text-white tracking-tight">
+                    Today's Workspace 👋
+                  </h1>
+                  <p className="text-slate-400 mt-2 text-[15px]">
+                    Hello, {user?.user_metadata?.full_name?.split(' ')[0] || 'there'}! Continue where you left off.
+                  </p>
                 </div>
-                <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
-                  <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
-                    <RefreshCw className="w-6 h-6 text-blue-400"/>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 text-[13px] font-medium">Prompts Reused</p>
-                    <h3 className="text-3xl font-black text-white">{activePrompts.reduce((a,p) => a + p.use_count, 0)}</h3>
-                    <p className="text-[12px] text-blue-400 mt-0.5">This week</p>
-                  </div>
-                </div>
-                <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
-                  <div className="w-14 h-14 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center shrink-0">
-                    <LayoutGrid className="w-6 h-6 text-green-400"/>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 text-[13px] font-medium">Prompts Generated</p>
-                    <h3 className="text-3xl font-black text-white">{totalPrompts}</h3>
-                    <p className="text-[12px] text-green-400 mt-0.5">This week</p>
-                  </div>
-                </div>
-                <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
-                  <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
-                    <Library className="w-6 h-6 text-amber-400"/>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 text-[13px] font-medium">Outputs Generated</p>
-                    <h3 className="text-3xl font-black text-white">{activeOutputs.length}</h3>
-                    <p className="text-[12px] text-amber-400 mt-0.5">This week</p>
-                  </div>
-                </div>
-              </div>
 
-              {/* ANA İÇERİK */}
-              <div className="grid grid-cols-3 gap-6">
+                {/* STAT CARDS (4 Sütunlu Grid) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+                  
+                  {/* Kart 1 */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
+                    <div className="w-14 h-14 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                      <Workflow className="w-6 h-6 text-violet-400"/>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 text-[13px] font-medium">Workflows in Progress</p>
+                      <h3 className="text-3xl font-black text-white">{workflows.length}</h3>
+                      <p className="text-[12px] text-violet-400 mt-0.5">Active</p>
+                    </div>
+                  </div>
+                  
+                  {/* Kart 2 */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
+                    <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                      <RefreshCw className="w-6 h-6 text-blue-400"/>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 text-[13px] font-medium">Prompts Reused</p>
+                      <h3 className="text-3xl font-black text-white">{activePrompts.reduce((a,p) => a + p.use_count, 0)}</h3>
+                      <p className="text-[12px] text-blue-400 mt-0.5">This week</p>
+                    </div>
+                  </div>
+                  
+                  {/* Kart 3 */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
+                    <div className="w-14 h-14 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center shrink-0">
+                      <LayoutGrid className="w-6 h-6 text-green-400"/>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 text-[13px] font-medium">Prompts Generated</p>
+                      <h3 className="text-3xl font-black text-white">{totalPrompts}</h3>
+                      <p className="text-[12px] text-green-400 mt-0.5">This week</p>
+                    </div>
+                  </div>
+                  
+                  {/* Kart 4 */}
+                  <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-6 flex items-center gap-5">
+                    <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                      <Library className="w-6 h-6 text-amber-400"/>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 text-[13px] font-medium">Outputs Generated</p>
+                      <h3 className="text-3xl font-black text-white">{activeOutputs.length}</h3>
+                      <p className="text-[12px] text-amber-400 mt-0.5">This week</p>
+                    </div>
+                  </div>
 
-                {/* SOL KOLON */}
-                <div className="col-span-2 space-y-6">
+                </div>
+
+                {/* ANA İÇERİK (Grid: Sol kolon geniş, sağ kolon dar) */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                  {/* SOL KOLON (2 birim genişlikte) */}
+                  <div className="lg:col-span-2 space-y-6">
 
                   {/* ACTIVE WORKFLOWS */}
                   <div className="bg-[#0A0A0F]/80 border border-white/5 rounded-3xl p-8">
@@ -2643,7 +2865,7 @@ const handleMagicPaste = async () => {
                             Create your first workflow →
                           </button>
                         </div>
-                      ) : workflows.slice(0,3).map((wf, i) => {
+                      ) : (workflows || []).slice(0, 3).map((wf, i) => {
                         const progress = Math.round(((i + 1) / Math.max(wf.steps.length, 1)) * 100)
                         return (
                           <div key={wf.id} className="bg-black/40 border border-white/5 rounded-2xl p-5 hover:border-indigo-500/30 transition-all group">
@@ -2689,7 +2911,7 @@ const handleMagicPaste = async () => {
                       </div>
                     ) : (
                       <div className="grid grid-cols-2 gap-4">
-                        {activeOutputs.slice(0,4).map(output => (
+                        {(activeOutputs || []).slice(0, 4).map((output) => (
                           <div key={output.id} onClick={() => setViewingOutput(output)} className="bg-black/40 border border-white/5 rounded-2xl p-5 hover:border-pink-500/30 cursor-pointer transition-all group">
                             <div className="flex items-center gap-2 mb-3">
                               <span className={`text-[10px] uppercase px-2.5 py-1 rounded-lg font-black border ${getPlatformStyle(output.platform)}`}>
@@ -3525,44 +3747,33 @@ const handleMagicPaste = async () => {
                   </div>
                   
                   <div className="flex items-center gap-3 mt-auto pt-4 border-t border-white/5">
-                    
-                    {/* MULTI PLATFORM DOTS */}
                     <div className="flex -space-x-2">
-                      {prompt.platforms.slice(0,3).map((p: string) => (
-                         <span 
-                           key={p} 
-                           className={`w-7 h-7 rounded-full border-2 border-[#0A0A0F] flex items-center justify-center text-[9px] font-bold uppercase shadow-md ${getPlatformStyle(p)}`} 
-                           title={getPlatformLabel(p)}
-                         >
-                           {p.substring(0,1)}
-                         </span>
+                      {(prompt.platforms ?? ['chatgpt']).slice(0,3).map((p: string) => (
+                        <span key={p} className={`w-7 h-7 rounded-full border-2 border-[#0A0A0F] flex items-center justify-center text-[9px] font-bold uppercase shadow-md ${getPlatformStyle(p)}`} title={getPlatformLabel(p)}>
+                          {p.substring(0,1)}
+                        </span>
                       ))}
-                      {prompt.platforms.length > 3 && (
+                      {(prompt.platforms ?? ['chatgpt']).length > 3 && (
                         <span className="w-7 h-7 rounded-full border-2 border-[#0A0A0F] bg-white/10 flex items-center justify-center text-[9px] font-bold text-slate-300 shadow-md">
-                          +{prompt.platforms.length - 3}
+                          +{(prompt.platforms ?? ['chatgpt']).length - 3}
                         </span>
                       )}
                     </div>
-                    
                     <span className="text-[11px] bg-white/10 border border-white/5 px-3 py-1.5 rounded-lg text-slate-300 ml-1 font-semibold shadow-sm">
-                      {prompt.category}
+                      {prompt.category ?? 'General'}
                     </span>
-                    
-                    <button 
-                      onClick={(e) => copyToClipboard(prompt.content, prompt.id, e)} 
-                      className="ml-auto flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 hover:bg-violet-500/20 hover:text-violet-300 text-slate-400 transition-all border border-transparent hover:border-violet-500/30 shrink-0 shadow-sm"
-                    >
+                    <button onClick={(e) => copyToClipboard(prompt.content, prompt.id, e)} className="ml-auto flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 hover:bg-violet-500/20 hover:text-violet-300 text-slate-400 transition-all border border-transparent hover:border-violet-500/30 shrink-0 shadow-sm">
                       {copiedId === prompt.id ? <Check className="w-5 h-5 text-green-400" /> : <Copy className="w-5 h-5" />}
                     </button>
                   </div>
                 </div>
               ))}
             </div>
-          )}
-        </div> }
-      </main>
+          )} 
+          </div>
+          </div>
+        </main>
         
-      {/* ============================================================================ */}
       {/* 8. MODALLAR (OVERLAYS)                                                       */}
       {/* ============================================================================ */}
 {/* ============================================================================ */}
@@ -3973,15 +4184,18 @@ const handleMagicPaste = async () => {
           <div className="flex items-center justify-between p-8 border-b border-white/5 bg-[#111118] shrink-0">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-2xl bg-pink-500/10 text-pink-400 flex items-center justify-center border border-pink-500/20 shadow-inner">
+                {/* HATA 1 DÜZELTİLDİ: viewingOutput?.format? yerine viewingOutput.format */}
                 {viewingOutput ? getFormatIcon(viewingOutput.format) : <Library className="w-6 h-6" />}
               </div>
               <div>
                 <DialogTitle className="text-[20px] font-bold text-white capitalize tracking-tight">
-                  {viewingOutput?.format.replace('_', ' ')} Output
+                {/* EĞER format TANIMSIZSA ÇÖKMESİN DİYE GÜVENLİK EKLENDİ */}
+                {viewingOutput?.format?.replace('_', ' ') || 'Unknown'} Output
                 </DialogTitle>
                 <p className="text-[13px] text-slate-400 mt-0.5">
-                  Generated via {viewingOutput && getPlatformLabel(viewingOutput.platform)}
-                </p>
+                {/* HATA 2 DÜZELTİLDİ: viewingOutput?.platform? yerine viewingOutput.platform */}
+                Generated via {viewingOutput ? getPlatformLabel(viewingOutput.platform) : 'Unknown Platform'}
+              </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -4016,12 +4230,12 @@ const handleMagicPaste = async () => {
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-[#060609]">
             <div className={`w-full lg:w-[35%] bg-[#0A0A0F]/50 border-b lg:border-b-0 lg:border-r border-white/5 p-10 overflow-y-auto space-y-10 ${scrollbarClasses}`}>
               
-              {viewingOutput?.prompt_id && activePrompts.find(p => p.id === viewingOutput.prompt_id) ? (
+              {viewingOutput?.prompt_id && activePrompts.find(p => p.id === viewingOutput?.prompt_id) ? (
                 <div>
                   <h4 className="text-[12px] font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Sparkles className="w-4 h-4 text-pink-400" /> Parent Prompt</h4>
-                  <div className="bg-black/40 border border-white/10 rounded-2xl p-6 cursor-pointer hover:border-pink-500/40 transition-colors shadow-lg group" onClick={() => openWorkspace(activePrompts.find(p => p.id === viewingOutput.prompt_id)!)}>
-                    <h5 className="text-[15px] font-bold text-slate-200 mb-2 group-hover:text-pink-300 transition-colors">{activePrompts.find(p => p.id === viewingOutput.prompt_id)?.title}</h5>
-                    <p className="text-[13px] text-slate-500 line-clamp-5 leading-relaxed">{activePrompts.find(p => p.id === viewingOutput.prompt_id)?.content}</p>
+                  <div className="bg-black/40 border border-white/10 rounded-2xl p-6 cursor-pointer hover:border-pink-500/40 transition-colors shadow-lg group" onClick={() => openWorkspace(activePrompts.find(p => p.id === viewingOutput?.prompt_id)!)}>
+                    <h5 className="text-[15px] font-bold text-slate-200 mb-2 group-hover:text-pink-300 transition-colors">{activePrompts.find(p => p.id === viewingOutput?.prompt_id)?.title}</h5>
+                    <p className="text-[13px] text-slate-500 line-clamp-5 leading-relaxed">{activePrompts.find(p => p.id === viewingOutput?.prompt_id)?.content}</p>
                     <div className="mt-4 pt-4 border-t border-white/5 flex justify-end">
                        <span className="text-[10px] bg-pink-500/10 text-pink-400 px-2 py-1 rounded font-bold uppercase">Click to open workspace</span>
                     </div>
@@ -4036,7 +4250,7 @@ const handleMagicPaste = async () => {
               {viewingOutput?.notes && (
                 <div>
                   <h4 className="text-[12px] font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><BookOpen className="w-4 h-4"/> Notes / Context</h4>
-                  <p className="text-[14px] text-slate-300 leading-relaxed p-6 bg-black/40 rounded-2xl border border-white/10 shadow-inner">{viewingOutput.notes}</p>
+                  <p className="text-[14px] text-slate-300 leading-relaxed p-6 bg-black/40 rounded-2xl border border-white/10 shadow-inner">{viewingOutput?.notes}</p>
                 </div>
               )}
             </div>
@@ -4074,8 +4288,8 @@ const handleMagicPaste = async () => {
                   {editingOutput ? 'Edit Saved Output' : 'Smart Magic Paste'}
                 </DialogTitle>
                 <p className="text-[14px] text-slate-400 mt-1">
-                  {editingOutput ? 'Modify your archived generation' : 'Auto-extract prompt and output from raw chat logs'}
-                </p>
+                {editingPrompt ? `Managing template: ${editingPrompt?.title}` : 'Build your custom prompt template from scratch'}
+              </p>
               </div>
             </div>
             <button 
@@ -4272,7 +4486,7 @@ const handleMagicPaste = async () => {
                 >
                   <Library className="w-4 h-4" /> Saved Outputs
                   <span className={`text-[11px] px-2 py-0.5 rounded-lg font-black ${activeTab === 'outputs' ? 'bg-white/20 text-white' : 'bg-white/10 text-slate-300'}`}>
-                    {activeOutputs.filter(o => o.prompt_id === editingPrompt.id).length}
+                    {activeOutputs.filter(o => o.prompt_id === editingPrompt?.id).length}
                   </span>
                 </button>
               )}
@@ -4625,8 +4839,34 @@ const handleMagicPaste = async () => {
               <div className="flex h-full p-10 gap-10">
                 <div className="w-1/2 space-y-8 flex flex-col h-full">
                   <div>
-                    <h4 className="text-[14px] font-bold text-slate-400 uppercase tracking-wider mb-4">Original Prompt</h4>
-                    <div className={`p-6 bg-black/40 border border-white/5 rounded-3xl text-[14px] text-slate-300 whitespace-pre-wrap h-[300px] overflow-y-auto ${scrollbarClasses}`}>
+                    <h4 className="text-[14px] font-bold text-slate-400 uppercase tracking-wider mb-3">Original Prompt</h4>
+                    
+                    {/* ARAMA ÇUBUĞU */}
+                    <div className="relative mb-3 group">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-violet-400 transition-colors z-10" />
+                      <input
+                        type="text"
+                        placeholder="Search in prompt..."
+                        onChange={(e) => {
+                          const searchTerm = e.target.value.toLowerCase()
+                          const el = document.getElementById('optimize-original-content')
+                          if (el) {
+                            if (!searchTerm) {
+                              el.innerHTML = form.content
+                              return
+                            }
+                            const highlighted = form.content.replace(
+                              new RegExp(`(${searchTerm})`, 'gi'),
+                              '<mark style="background: rgba(139,92,246,0.4); color: white; border-radius: 3px; padding: 0 2px;">$1</mark>'
+                            )
+                            el.innerHTML = highlighted
+                          }
+                        }}
+                        className="w-full bg-black/40 border border-white/10 rounded-xl pl-11 pr-4 py-2.5 text-[13px] text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50 transition-all hover:border-white/20"
+                      />
+                    </div>
+
+                    <div id="optimize-original-content" className={`p-6 bg-black/40 border border-white/5 rounded-3xl text-[14px] text-slate-300 whitespace-pre-wrap h-[260px] overflow-y-auto ${scrollbarClasses}`}>
                       {form.content}
                     </div>
                   </div>
@@ -4635,20 +4875,20 @@ const handleMagicPaste = async () => {
                     <div className="bg-green-500/5 border border-green-500/20 p-6 rounded-3xl">
                       <h5 className="text-[13px] font-bold text-green-400 uppercase tracking-wider mb-3">Strengths</h5>
                       <ul className="list-disc pl-5 text-[13px] text-slate-300 space-y-2">
-                        {optimizeResult.strengths.map(s => <li key={s}>{s}</li>)}
+                        {optimizeResult?.strengths?.map(s => <li key={s}>{s}</li>)}
                       </ul>
                     </div>
                     <div className="bg-red-500/5 border border-red-500/20 p-6 rounded-3xl">
                       <h5 className="text-[13px] font-bold text-red-400 uppercase tracking-wider mb-3">Weaknesses</h5>
                       <ul className="list-disc pl-5 text-[13px] text-slate-300 space-y-2">
-                        {optimizeResult.weaknesses.map(w => <li key={w}>{w}</li>)}
+                        {optimizeResult?.weaknesses?.map(w => <li key={w}>{w}</li>)}
                       </ul>
                     </div>
                   </div>
                 </div>
                 <div className="w-1/2 flex flex-col h-full border-l border-white/5 pl-10">
                   <h4 className="text-[15px] font-bold text-violet-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Sparkles className="w-5 h-5"/> Optimized Prompt</h4>
-                  <Textarea value={optimizeResult.improved_prompt} onChange={e => setOptimizeResult(prev => ({...prev!, improved_prompt: e.target.value}))} className={`flex-1 bg-violet-500/5 border border-violet-500/20 text-[15px] p-8 resize-none focus-visible:ring-2 focus-visible:ring-violet-500/50 rounded-3xl text-slate-200 leading-relaxed font-serif ${scrollbarClasses}`} />
+                  <Textarea value={optimizeResult?.improved_prompt} onChange={e => setOptimizeResult(prev => ({...prev!, improved_prompt: e.target.value}))} className={`flex-1 bg-violet-500/5 border border-violet-500/20 text-[15px] p-8 resize-none focus-visible:ring-2 focus-visible:ring-violet-500/50 rounded-3xl text-slate-200 leading-relaxed font-serif ${scrollbarClasses}`} />
                   <div className="mt-8 flex gap-5">
                     <button onClick={() => setShowOptimizeModal(false)} className="px-8 py-4 rounded-xl border border-white/10 text-slate-400 hover:text-white transition-colors text-[15px] font-bold">Discard Changes</button>
                     <button onClick={acceptOptimization} className="flex-1 py-4 bg-violet-600 hover:bg-violet-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-[0_0_20px_-5px_rgba(139,92,246,0.5)] transition-all text-[15px]"><CheckCircle2 className="w-5 h-5"/> Replace Original Prompt</button>
@@ -4660,56 +4900,300 @@ const handleMagicPaste = async () => {
         </DialogContent>
       </Dialog>
 
+      {/* ============================================================================ */}
       {/* SETTINGS MODAL */}
-    <Dialog open={showSettings} onOpenChange={setShowSettings}>
-      <DialogContent aria-describedby={undefined} className="bg-[#0A0A0F] border-white/10 rounded-[32px] sm:max-w-[90vw] lg:max-w-[1100px] p-0 overflow-hidden shadow-2xl [&>button]:hidden">
-        
-        {/* RADIX UI'I SUSTURMAK İÇİN EKLENEN GİZLİ BAŞLIK */}
-        <DialogTitle className="sr-only">Platform Settings</DialogTitle>
-        
-        <SettingsView 
-          user={user} 
-          supabase={supabase} 
-          onClose={() => setShowSettings(false)} 
-          onUpdateUser={() => window.location.reload()}
-        />
-      </DialogContent>
-    </Dialog>
+      {/* ============================================================================ */}
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent aria-describedby={undefined} className="bg-[#0A0A0F] border-white/10 rounded-[32px] sm:max-w-[90vw] lg:max-w-[1100px] p-0 overflow-hidden shadow-2xl [&>button]:hidden">
+          <DialogTitle className="sr-only">Platform Settings</DialogTitle>
+          <SettingsView 
+            user={user} 
+            supabase={supabase} 
+            onClose={() => setShowSettings(false)} 
+            onUpdateUser={() => window.location.reload()}
+          />
+        </DialogContent>
+      </Dialog>
 
-      <Dialog open={showAddCollection} onOpenChange={setShowAddCollection}>
-        <DialogContent className="bg-[#111118] border-white/10 rounded-3xl w-full max-w-md shadow-2xl p-0 gap-0 text-white [&>button]:hidden">
-          <div className="flex justify-between items-center p-8 border-b border-white/5">
-            <DialogTitle className="text-[18px] font-bold flex items-center gap-3"><Folder className="w-6 h-6 text-violet-400"/> {editingCollection ? 'Edit Collection' : 'Create Collection'}</DialogTitle>
-            <button onClick={() => setShowAddCollection(false)} className="p-2.5 bg-white/5 hover:bg-white/10 rounded-xl transition-colors"><XCircle className="w-5 h-5 text-slate-500 hover:text-white"/></button>
-          </div>
-          <div className="p-8 space-y-8">
-            <div>
-              <label className="text-[13px] font-bold text-slate-400 uppercase tracking-wider block mb-3">Collection Name</label>
-              <Input value={collectionForm.name} onChange={e => setCollectionForm(f => ({...f, name: e.target.value}))} placeholder="e.g. Sales & Marketing Prompts" className="bg-[#060609] border-white/10 h-14 text-[15px] focus-visible:ring-2 focus-visible:ring-violet-500/50" />
+      {/* ============================================================================ */}
+      {/* PROFİL AYARLARI MODALI (Email & Şifre Değiştirme - Supabase Bağlantılı)      */}
+      {/* ============================================================================ */}
+      <Dialog open={showProfileSettings} onOpenChange={setShowProfileSettings}>
+        <DialogContent aria-describedby={undefined} className="bg-[#0A0A0F] border-white/10 rounded-3xl sm:max-w-[450px] shadow-2xl p-8 text-white [&>button]:hidden">
+          {/* Google OAuth Kontrolü (Google ile Giriş İstisnası) */}
+          {(() => {
+            const isGoogleUser = (user as any)?.app_metadata?.provider === 'google' || (user as any)?.identities?.[0]?.provider === 'google';
+            
+            return (
+              <>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center border border-violet-500/20">
+                    <User className="w-5 h-5 text-violet-400" />
+                  </div>
+                  <div>
+                    <DialogTitle className="text-[18px] font-bold text-white tracking-tight">Profile Settings</DialogTitle>
+                    <p className="text-[12px] text-slate-400 mt-0.5">Manage your account credentials</p>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Email Değiştirme Alanı */}
+                  <div className="space-y-3">
+                    <label className="text-[11px] font-black text-slate-500 uppercase tracking-wider">Email Address</label>
+                    <div className="flex gap-2">
+                      <Input 
+                        value={newEmail} 
+                        onChange={(e) => setNewEmail(e.target.value)}
+                        disabled={isGoogleUser}
+                        className="bg-black/40 border-white/10 text-white rounded-xl focus-visible:ring-1 focus-visible:ring-violet-500/50 disabled:opacity-40 disabled:cursor-not-allowed" 
+                      />
+                      <button 
+                        onClick={handleUpdateEmail}
+                        disabled={isGoogleUser}
+                        className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-[12px] font-bold transition-all text-slate-300 hover:text-white shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        Update
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="h-px w-full bg-white/5"></div>
+
+                  {/* Şifre Değiştirme Alanı / Google Giriş İstisnası Kapsamı */}
+                  <div className="space-y-3">
+                    <label className="text-[11px] font-black text-slate-500 uppercase tracking-wider">Password Management</label>
+                    
+                    {isGoogleUser ? (
+                      /* Google ile giriş yapanlara gösterilecek özel bilgilendirme kartı */
+                      <div className="p-4 bg-violet-500/5 border border-violet-500/10 rounded-xl text-[12px] text-slate-400 leading-relaxed">
+                        Your account is securely connected via <span className="text-violet-400 font-semibold">Google OAuth</span>. You can manage your email and password settings directly from your Google Account dashboard.
+                      </div>
+                    ) : (
+                      /* Klasik mail/şifre ile girenlerin göreceği alan */
+                      <div className="flex gap-2">
+                        <Input 
+                          type="password" 
+                          placeholder="Enter new password" 
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="bg-black/40 border-white/10 text-white rounded-xl focus-visible:ring-1 focus-visible:ring-violet-500/50" 
+                        />
+                        <button 
+                          onClick={handleChangePassword}
+                          className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-[12px] font-bold transition-all text-slate-300 hover:text-white shrink-0"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-8 flex justify-end">
+                  <button onClick={() => setShowProfileSettings(false)} className="px-6 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-[13px] transition-all shadow-[0_0_15px_-3px_rgba(139,92,246,0.4)]">Close</button>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ============================================================================ */}
+      {/* GERİ BİLDİRİM (FEEDBACK) MODALI                                              */}
+      {/* ============================================================================ */}
+      <Dialog open={showFeedback} onOpenChange={setShowFeedback}>
+        <DialogContent aria-describedby={undefined} className="bg-[#0A0A0F] border-white/10 rounded-3xl sm:max-w-[500px] shadow-2xl p-8 text-white [&>button]:hidden">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+              <MessageSquare className="w-5 h-5 text-amber-400" />
             </div>
             <div>
-              <label className="text-[13px] font-bold text-slate-400 uppercase tracking-wider block mb-3">Description (Optional)</label>
-              <Input value={collectionForm.description} onChange={e => setCollectionForm(f => ({...f, description: e.target.value}))} placeholder="What is this collection for?" className="bg-[#060609] border-white/10 h-14 text-[15px] focus-visible:ring-2 focus-visible:ring-violet-500/50" />
+              <DialogTitle className="text-[18px] font-bold text-white tracking-tight">Submit Feedback</DialogTitle>
+              <p className="text-[12px] text-slate-400 mt-0.5">Help us improve the product experience</p>
             </div>
           </div>
-          <div className="p-8 border-t border-white/5 flex gap-4">
-            <button onClick={() => setShowAddCollection(false)} className="flex-1 py-4 border border-white/10 hover:bg-white/5 rounded-xl text-[15px] font-bold transition-colors">Cancel</button>
-            <button onClick={handleSaveCollection} disabled={submitting || !collectionForm.name.trim()} className="flex-1 py-4 bg-violet-600 hover:bg-violet-500 rounded-xl font-bold transition-colors disabled:opacity-50 text-[15px] shadow-[0_0_15px_-3px_rgba(139,92,246,0.5)]">Save Collection</button>
+          
+          <p className="text-[13px] text-slate-400 mb-6 leading-relaxed">
+            We'd love to hear what went well or how we can improve the platform. Your feedback goes directly to our development workflow.
+          </p>
+          
+          <Textarea 
+            placeholder="Tell us your thoughts, report a bug, or suggest a feature..." 
+            value={feedbackText}
+            onChange={(e) => setFeedbackText(e.target.value)}
+            className="w-full min-h-[160px] bg-black/40 border-white/10 text-slate-300 resize-y p-5 rounded-xl focus-visible:ring-1 focus-visible:ring-amber-500/50 mb-6" 
+          />
+          
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setShowFeedback(false)} className="px-5 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white transition-colors text-[13px] font-bold">Cancel</button>
+            <button onClick={handleFeedbackSubmit} className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-[13px] shadow-[0_0_15px_-3px_rgba(245,158,11,0.4)] transition-all flex items-center gap-2">
+              Send Feedback
+            </button>
           </div>
         </DialogContent>
       </Dialog>
-    </div>
-  )
-}
 
-function MenuItems({ items }: { items: {value: string, label: string}[] }) {
-  return (
-    <>
-      {items.map(i => (
-        <SelectItem key={i.value} value={i.value} className="cursor-pointer font-bold hover:bg-white/5 text-[13px] py-2.5">
-          {i.label}
-        </SelectItem>
-      ))}
-    </>
-  )
+      {/* ADD/EDIT COLLECTION MODAL */}
+      <Dialog open={showAddCollection} onOpenChange={(open) => { 
+        if(!open) { 
+          setShowAddCollection(false)
+          setEditingCollection(null)
+          setCollectionForm({name: '', description: ''})
+        }
+      }}>
+        <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-3xl w-full max-w-md p-0 text-white shadow-2xl [&>button]:hidden">
+          <div className="p-6 border-b border-white/5 bg-[#060609] flex justify-between items-center">
+            <div>
+              <DialogTitle className="text-[18px] font-bold flex items-center gap-2">
+                <Folder className="w-5 h-5 text-violet-400" />
+                {editingCollection ? 'Edit Collection' : 'Create Collection'}
+              </DialogTitle>
+              <p className="text-[13px] text-slate-400 mt-1">
+                {editingCollection ? 'Update collection details' : 'Organize your prompts into a collection'}
+              </p>
+            </div>
+            <button 
+              onClick={() => { setShowAddCollection(false); setEditingCollection(null); setCollectionForm({name: '', description: ''}); }} 
+              className="p-2 bg-white/5 hover:bg-white/10 rounded-xl transition-colors"
+            >
+              <XCircle className="w-5 h-5 text-slate-400" />
+            </button>
+          </div>
+
+          <div className="p-6 space-y-5">
+            {error && (
+              <div className="flex items-center gap-3 text-[13px] font-medium text-red-400 bg-red-500/10 p-4 rounded-xl border border-red-500/20">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <p>{error}</p>
+              </div>
+            )}
+            <div>
+              <label className="text-[12px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">
+                Collection Name
+              </label>
+              <Input 
+                value={collectionForm.name} 
+                onChange={e => setCollectionForm(f => ({...f, name: e.target.value}))} 
+                placeholder="e.g. Marketing Prompts" 
+                className="bg-[#060609] border-white/10 text-white h-12 text-[14px] focus-visible:ring-2 focus-visible:ring-violet-500/50" 
+              />
+            </div>
+            <div>
+              <label className="text-[12px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">
+                Description <span className="text-[10px] text-slate-500 normal-case">Optional</span>
+              </label>
+              <Input 
+                value={collectionForm.description} 
+                onChange={e => setCollectionForm(f => ({...f, description: e.target.value}))} 
+                placeholder="What is this collection for?" 
+                className="bg-[#060609] border-white/10 text-white h-12 text-[14px] focus-visible:ring-2 focus-visible:ring-violet-500/50" 
+              />
+            </div>
+          </div>
+
+          <div className="p-6 border-t border-white/5 bg-[#060609] flex gap-3">
+            <button 
+              onClick={() => { setShowAddCollection(false); setEditingCollection(null); setCollectionForm({name: '', description: ''}); }} 
+              className="flex-1 py-3 rounded-xl border border-white/10 text-[14px] font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={handleSaveCollection} 
+              disabled={submitting || !collectionForm.name.trim()} 
+              className="flex-1 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-[14px] font-bold transition-all shadow-[0_0_15px_-3px_rgba(139,92,246,0.5)] disabled:opacity-50"
+            >
+              {submitting ? 'Saving...' : editingCollection ? 'Save Changes' : 'Create Collection'}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* COLLECTION SHARE MODAL */}
+      <Dialog open={!!shareModalCollection} onOpenChange={(open) => { if(!open) setShareModalCollection(null) }}>
+        <DialogContent className="bg-[#0A0A0F] border-white/10 rounded-3xl w-full max-w-lg p-0 text-white shadow-2xl [&>button]:hidden">
+          <div className="p-6 border-b border-white/5 bg-[#060609] flex justify-between items-center">
+            <div>
+              <DialogTitle className="text-[18px] font-bold flex items-center gap-2">
+                <Share2 className="w-5 h-5 text-violet-400" /> Share Collection
+              </DialogTitle>
+              <p className="text-[13px] text-slate-400 mt-1">{shareModalCollection?.name}</p>
+            </div>
+            <button onClick={() => setShareModalCollection(null)} className="p-2 bg-white/5 hover:bg-white/10 rounded-xl transition-colors">
+              <XCircle className="w-5 h-5 text-slate-400" />
+            </button>
+          </div>
+
+          <div className="p-6 space-y-6">
+            
+            {/* Durum göstergesi */}
+            <div className={`flex items-center gap-3 p-4 rounded-2xl border ${shareModalCollection?.is_public ? 'bg-green-500/5 border-green-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
+              <div className={`w-2.5 h-2.5 rounded-full ${shareModalCollection?.is_public ? 'bg-green-400' : 'bg-amber-400'}`} />
+              <p className="text-[13px] font-medium text-slate-300">
+                {shareModalCollection?.is_public 
+                  ? 'This collection is public — anyone with the link can view and import it.'
+                  : 'This collection is private — make it public to share.'}
+              </p>
+            </div>
+
+            {/* Public/Private toggle */}
+            <div className="flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/5">
+              <div>
+                <p className="text-[14px] font-semibold text-white">Public Access</p>
+                <p className="text-[12px] text-slate-500 mt-0.5">Allow anyone with the link to view</p>
+              </div>
+              <button
+                onClick={() => shareModalCollection && handleToggleCollectionPublic(shareModalCollection).then(() => {
+                  setShareModalCollection(prev => prev ? {...prev, is_public: !prev.is_public} : null)
+                })}
+                className={`relative w-12 h-6 rounded-full transition-all ${shareModalCollection?.is_public ? 'bg-violet-600' : 'bg-white/10'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${shareModalCollection?.is_public ? 'left-7' : 'left-1'}`} />
+              </button>
+            </div>
+
+            {/* Share link */}
+            {shareModalCollection?.is_public && (
+              <div>
+                <label className="text-[12px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Share Link</label>
+                <div className="flex gap-2">
+                  <div className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-[13px] text-slate-300 font-mono truncate">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/share/${shareModalCollection.id}` : ''}
+                  </div>
+                  <button
+                    onClick={() => shareModalCollection && handleCopyShareLink(shareModalCollection.id)}
+                    className={`px-4 py-3 rounded-xl text-[13px] font-bold transition-all flex items-center gap-2 ${sharingCollectionId === shareModalCollection?.id ? 'bg-green-600 text-white' : 'bg-violet-600 hover:bg-violet-500 text-white'}`}
+                  >
+                    {sharingCollectionId === shareModalCollection?.id 
+                      ? <><CheckCircle2 className="w-4 h-4" /> Copied!</>
+                      : <><Copy className="w-4 h-4" /> Copy</>
+                    }
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Prompt sayısı */}
+            <div className="flex items-center gap-3 p-4 bg-black/40 rounded-2xl border border-white/5">
+              <BookOpen className="w-5 h-5 text-violet-400" />
+              <div>
+                <p className="text-[14px] font-semibold text-white">
+                  {shareModalCollection ? activePrompts.filter(p => p.collection_id === shareModalCollection.id).length : 0} Prompts
+                </p>
+                <p className="text-[12px] text-slate-500">in this collection</p>
+              </div>
+            </div>
+
+          </div>
+
+          <div className="p-6 border-t border-white/5 bg-[#060609]">
+            <button onClick={() => setShareModalCollection(null)} className="w-full py-3 rounded-xl bg-white/5 hover:bg-white/10 text-[14px] font-bold transition-colors">
+              Close
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+    </div>
+  );
 }
